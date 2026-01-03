@@ -11,11 +11,15 @@ function clampMinutes(n: number) {
 export function TaskRow(props: {
   task: Task;
   tone?: { bg: string; accent: string };
+  minutesOverride?: number;
+  minutesReadOnly?: boolean;
   onEditTitle: (id: string, title: string) => void;
   onEditMinutes: (id: string, minutes: number) => void;
   onToggleDone: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleInSprint?: (id: string) => void;
+  onDuplicate?: (id: string) => void;
+  onRequestAddSubtask?: (parentId: string) => void;
 }) {
   const minutes = useMemo(
     () => clampMinutes(props.task.estimateMinutes),
@@ -24,6 +28,9 @@ export function TaskRow(props: {
 
   const isBreak = props.task.kind === "break";
   const muted = props.task.status === "done";
+  const showAddSubtask = Boolean(
+    props.onRequestAddSubtask && props.task.parentId === null && props.task.kind === "task",
+  );
 
   return (
     <div
@@ -80,11 +87,13 @@ export function TaskRow(props: {
           <input
             type="number"
             min={1}
-            value={minutes}
+            value={props.minutesOverride ?? minutes}
             onChange={(e) => {
+              if (props.minutesReadOnly) return;
               const val = e.target.valueAsNumber;
               props.onEditMinutes(props.task.id, isNaN(val) ? 1 : clampMinutes(val));
             }}
+            disabled={props.minutesReadOnly}
             className="w-[96px] rounded-lg border border-line bg-white/70 px-2 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
             aria-label="Estimated minutes"
           />
@@ -92,6 +101,26 @@ export function TaskRow(props: {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {props.onDuplicate ? (
+            <button
+              type="button"
+              onClick={() => props.onDuplicate?.(props.task.id)}
+              className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
+            >
+              Duplicate
+            </button>
+          ) : null}
+
+          {showAddSubtask ? (
+            <button
+              type="button"
+              onClick={() => props.onRequestAddSubtask?.(props.task.id)}
+              className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
+            >
+              + Subtask
+            </button>
+          ) : null}
+
           {props.onToggleInSprint ? (
             <button
               type="button"

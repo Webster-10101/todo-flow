@@ -183,6 +183,43 @@ export function App() {
     });
   }
 
+  function duplicateTask(id: string) {
+    setTasks((prev) => {
+      const original = prev.find((t) => t.id === id);
+      if (!original) return prev;
+
+      const makeCopy = (t: Task, overrides: Partial<Task>): Task => ({
+        ...t,
+        ...overrides,
+        id: uid(),
+        createdAt: Date.now(),
+        status: "queued",
+      });
+
+      // Duplicate a parent task: copy parent + its children as a group.
+      if (original.parentId === null) {
+        const newParent = makeCopy(original, { parentId: null });
+        const children = prev.filter((t) => t.parentId === original.id);
+        const newChildren = children.map((c) => makeCopy(c, { parentId: newParent.id }));
+
+        // Insert after the original group (parent + its children)
+        const next = prev.slice();
+        const parentIdx = next.findIndex((t) => t.id === original.id);
+        let insertAt = parentIdx + 1;
+        while (insertAt < next.length && next[insertAt].parentId === original.id) insertAt++;
+        next.splice(insertAt, 0, newParent, ...newChildren);
+        return normalizeTasks(next);
+      }
+
+      // Duplicate a subtask: copy it right after itself
+      const newSub = makeCopy(original, { parentId: original.parentId });
+      const next = prev.slice();
+      const idx = next.findIndex((t) => t.id === original.id);
+      next.splice(idx + 1, 0, newSub);
+      return normalizeTasks(next);
+    });
+  }
+
   function editTitle(id: string, title: string) {
     setTasks((prev) => normalizeTasks(prev.map((t) => (t.id === id ? { ...t, title } : t))));
   }
@@ -499,11 +536,15 @@ export function App() {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 rounded-xl border border-line bg-white/70 px-4 py-3 shadow-soft backdrop-blur">
             <div className="min-w-0">
               <div className="text-xs text-muted">Now</div>
-              <div className="text-sm text-ink">{formatClock(now)}</div>
+              <div className="mt-0.5 inline-flex items-center rounded-lg border border-line bg-white/70 px-2 py-1 font-mono tabular-nums tracking-widest text-sm text-ink">
+                {formatClock(now)}
+              </div>
             </div>
             <div className="min-w-0">
               <div className="text-xs text-muted">Projected finish</div>
-              <div className="text-sm text-ink">{formatClock(projectedFinish)}</div>
+              <div className="mt-0.5 inline-flex items-center rounded-lg border border-line bg-white/70 px-2 py-1 font-mono tabular-nums tracking-widest text-sm text-ink">
+                {formatClock(projectedFinish)}
+              </div>
             </div>
             <div className="min-w-0 col-span-2 md:col-span-1">
               <label className="text-xs text-muted" htmlFor="latestFinish">
@@ -556,6 +597,7 @@ export function App() {
             projectedFinish={projectedFinish}
             onAddTask={addTask}
             onAddSubtask={addSubtask}
+            onDuplicate={duplicateTask}
             onInsertBreak={insertBreakInPlan}
             onStartSprint={startSprint}
             onTrimToFit={trimToFit}

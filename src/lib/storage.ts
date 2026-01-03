@@ -21,7 +21,7 @@ function isValidTask(obj: unknown): obj is Task {
     typeof t.extraMinutes === "number" &&
     isValidTaskStatus(t.status) &&
     isValidTaskKind(t.kind) &&
-    (t.parentId === null || typeof t.parentId === "string") &&
+    (t.parentId === undefined || t.parentId === null || typeof t.parentId === "string") &&
     typeof t.inSprint === "boolean" &&
     typeof t.createdAt === "number"
   );
@@ -85,7 +85,9 @@ export function loadState(): PersistedStateV1 | null {
 
     // Validate and filter tasks
     const validTasks = Array.isArray(parsed.tasks)
-      ? parsed.tasks.filter(isValidTask)
+      ? parsed.tasks
+          .filter(isValidTask)
+          .map((t) => ({ ...t, parentId: t.parentId ?? null }))
       : [];
 
     // Validate runner state

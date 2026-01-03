@@ -129,7 +129,10 @@ export function RunView(props: {
             <div className="mt-2 text-sm text-muted">
               {activeTask && props.runner.activeStartedAt ? (
                 <>
-                  Ends at <span className="text-ink">{activeEndAt ? formatClock(activeEndAt) : "—"}</span>
+                  Ends at{" "}
+                  <span className="inline-flex items-center rounded-lg border border-line bg-white/70 px-2 py-1 font-mono tabular-nums tracking-wider text-ink">
+                    {activeEndAt ? formatClock(activeEndAt) : "—"}
+                  </span>
                 </>
               ) : (
                 <>Start when you’re ready.</>
@@ -189,22 +192,23 @@ export function RunView(props: {
                 </button>
               ) : null}
 
-              <div className="mx-2 h-6 w-px bg-line" />
-
-              <button
-                type="button"
-                onClick={() => props.onInsertBreakNext(5)}
-                className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
-              >
-                Insert break +5
-              </button>
-              <button
-                type="button"
-                onClick={() => props.onInsertBreakNext(10)}
-                className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
-              >
-                Insert break +10
-              </button>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="hidden sm:inline text-xs text-muted">Break</span>
+                <button
+                  type="button"
+                  onClick={() => props.onInsertBreakNext(5)}
+                  className="rounded-lg border border-line bg-white/60 px-3 py-1.5 text-xs text-muted hover:bg-soft hover:text-ink transition-colors"
+                >
+                  +5
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.onInsertBreakNext(10)}
+                  className="rounded-lg border border-line bg-white/60 px-3 py-1.5 text-xs text-muted hover:bg-soft hover:text-ink transition-colors"
+                >
+                  +10
+                </button>
+              </div>
             </>
           ) : (
             <>
@@ -233,8 +237,6 @@ export function RunView(props: {
                 Delete
               </button>
 
-              <div className="mx-2 h-6 w-px bg-line" />
-
               <button
                 type="button"
                 onClick={() => props.onExtendActive(5)}
@@ -250,42 +252,50 @@ export function RunView(props: {
                 +10 min
               </button>
 
-              <div className="mx-2 h-6 w-px bg-line" />
-
-              <button
-                type="button"
-                onClick={() => props.onInsertBreakNext(5)}
-                className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
-              >
-                Insert break +5
-              </button>
-              <button
-                type="button"
-                onClick={() => props.onInsertBreakNext(10)}
-                className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
-              >
-                Insert break +10
-              </button>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="hidden sm:inline text-xs text-muted">Break</span>
+                <button
+                  type="button"
+                  onClick={() => props.onInsertBreakNext(5)}
+                  className="rounded-lg border border-line bg-white/60 px-3 py-1.5 text-xs text-muted hover:bg-soft hover:text-ink transition-colors"
+                >
+                  +5
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.onInsertBreakNext(10)}
+                  className="rounded-lg border border-line bg-white/60 px-3 py-1.5 text-xs text-muted hover:bg-soft hover:text-ink transition-colors"
+                >
+                  +10
+                </button>
+              </div>
             </>
           )}
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-sm">
-          <div className="text-muted">
-            Projected finish: <span className="text-ink">{formatClock(projectedFinish)}</span>
-            {pastCutoff ? <span className="ml-2 text-ink">· Runs past cutoff</span> : null}
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
+          <div className="rounded-xl border border-line bg-white/60 px-5 py-4 shadow-soft">
+            <div className="text-xs text-muted">Projected finish</div>
+            <div className="mt-1 font-mono tabular-nums tracking-widest text-2xl text-ink">
+              {formatClock(projectedFinish)}
+            </div>
+            {pastCutoff ? <div className="mt-1 text-xs text-muted">Runs past cutoff</div> : null}
           </div>
 
           {pastCutoff ? (
-            <button
-              type="button"
-              onClick={props.onStopAfterThisTask}
-              disabled={props.runner.stopAfterThisTask}
-              className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
-            >
-              {props.runner.stopAfterThisTask ? "Will stop after this task" : "Stop after this task"}
-            </button>
-          ) : null}
+            <div className="flex sm:justify-end">
+              <button
+                type="button"
+                onClick={props.onStopAfterThisTask}
+                disabled={props.runner.stopAfterThisTask}
+                className="w-full sm:w-auto rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
+              >
+                {props.runner.stopAfterThisTask ? "Will stop after this task" : "Stop after this task"}
+              </button>
+            </div>
+          ) : (
+            <div />
+          )}
         </div>
       </div>
 

@@ -34,6 +34,11 @@ function SortableTaskRow(props: {
   onToggleDone: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleInSprint?: (id: string) => void;
+  onDuplicate?: (id: string) => void;
+  onRequestAddSubtask?: (parentId: string) => void;
+  minutesOverrideById?: Record<string, number>;
+  minutesReadOnlyById?: Record<string, boolean>;
+  renderAfterRow?: (task: Task, index: number) => React.ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.task.id,
@@ -67,8 +72,13 @@ function SortableTaskRow(props: {
           onToggleDone={props.onToggleDone}
           onDelete={props.onDelete}
           onToggleInSprint={props.onToggleInSprint}
+          onDuplicate={props.onDuplicate}
+          onRequestAddSubtask={props.onRequestAddSubtask}
+          minutesOverride={props.minutesOverrideById?.[props.task.id]}
+          minutesReadOnly={props.minutesReadOnlyById?.[props.task.id]}
           tone={toneForIndex(props.index, props.task.kind)}
         />
+        {props.renderAfterRow ? props.renderAfterRow(props.task, props.index) : null}
       </div>
     </div>
   );
@@ -93,6 +103,11 @@ export function TaskList(props: {
   onToggleDone: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleInSprint?: (id: string) => void;
+  onDuplicate?: (id: string) => void;
+  onRequestAddSubtask?: (parentId: string) => void;
+  minutesOverrideById?: Record<string, number>;
+  minutesReadOnlyById?: Record<string, boolean>;
+  renderAfterRow?: (task: Task, index: number) => React.ReactNode;
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -130,6 +145,11 @@ export function TaskList(props: {
               onToggleDone={props.onToggleDone}
               onDelete={props.onDelete}
               onToggleInSprint={props.onToggleInSprint}
+              onDuplicate={props.onDuplicate}
+              onRequestAddSubtask={props.onRequestAddSubtask}
+              minutesOverrideById={props.minutesOverrideById}
+              minutesReadOnlyById={props.minutesReadOnlyById}
+              renderAfterRow={props.renderAfterRow}
             />
           ))}
         </div>

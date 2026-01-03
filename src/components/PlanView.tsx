@@ -13,6 +13,7 @@ export function PlanView(props: {
   projectedFinish: Date;
   onAddTask: (title: string, minutes: number) => void;
   onAddSubtask: (parentId: string, title: string, minutes: number) => void;
+  onDuplicate: (id: string) => void;
   onInsertBreak: (minutes: 5 | 10) => void;
   onStartSprint: () => void;
   onTrimToFit: () => void;
@@ -51,6 +52,23 @@ export function PlanView(props: {
     }
     return map;
   }, [props.tasks]);
+
+  const minutesOverrideById = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const parent of queuedSprint) {
+      if (parent.kind !== "task") continue;
+      const kids = subtasksByParent.get(parent.id) ?? [];
+      if (!kids.length) continue;
+      out[parent.id] = kids.reduce((sum, k) => sum + (k.estimateMinutes + k.extraMinutes), 0);
+    }
+    return out;
+  }, [queuedSprint, subtasksByParent]);
+
+  const minutesReadOnlyById = useMemo(() => {
+    const out: Record<string, boolean> = {};
+    for (const id of Object.keys(minutesOverrideById)) out[id] = true;
+    return out;
+  }, [minutesOverrideById]);
   const later = useMemo(
     () => props.tasks.filter((t) => t.status === "queued" && !t.inSprint),
     [props.tasks],
@@ -178,63 +196,68 @@ export function PlanView(props: {
         </div>
 
         {queuedSprint.length ? (
-          <div className="space-y-3">
-            <TaskList
-              tasks={queuedSprint}
-              onReorder={props.onReorderSprint}
-              onEditTitle={props.onEditTitle}
-              onEditMinutes={props.onEditMinutes}
-              onToggleDone={props.onToggleDone}
-              onDelete={props.onDelete}
-              onToggleInSprint={props.onToggleInSprint}
-            />
-
-            {queuedSprint.map((parent) => {
+          <TaskList
+            tasks={queuedSprint}
+            onReorder={props.onReorderSprint}
+            onEditTitle={props.onEditTitle}
+            onEditMinutes={props.onEditMinutes}
+            onToggleDone={props.onToggleDone}
+            onDelete={props.onDelete}
+            onToggleInSprint={props.onToggleInSprint}
+            onDuplicate={props.onDuplicate}
+            onRequestAddSubtask={(parentId) => {
+              setOpenSubtaskFor(parentId);
+              setSubTitle("");
+              setSubMinutes(10);
+            }}
+            minutesOverrideById={minutesOverrideById}
+            minutesReadOnlyById={minutesReadOnlyById}
+            renderAfterRow={(parent) => {
+              if (parent.kind !== "task") return null;
               const kids = subtasksByParent.get(parent.id) ?? [];
-              if (!kids.length) return null;
-              return (
-                <div key={`${parent.id}-subs`} className="ml-10 space-y-2">
-                  {kids.map((st) => (
-                    <TaskRow
-                      key={st.id}
-                      task={st}
-                      onEditTitle={props.onEditTitle}
-                      onEditMinutes={props.onEditMinutes}
-                      onToggleDone={props.onToggleDone}
-                      onDelete={props.onDelete}
-                    />
-                  ))}
-                </div>
-              );
-            })}
-
-            {/* Subtask adder (inline) */}
-            {queuedSprint.map((parent) => {
               const isOpen = openSubtaskFor === parent.id;
               return (
-                <div key={`${parent.id}-adder`} className="ml-10">
+                <div className="mt-2 ml-6 space-y-2">
+                  {kids.length ? (
+                    <div className="space-y-2">
+                      {kids.map((st) => (
+                        <TaskRow
+                          key={st.id}
+                          task={st}
+                          onEditTitle={props.onEditTitle}
+                          onEditMinutes={props.onEditMinutes}
+                          onToggleDone={props.onToggleDone}
+                          onDelete={props.onDelete}
+                          onDuplicate={props.onDuplicate}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+
                   {isOpen ? (
                     <div className="rounded-xl border border-line bg-white/60 p-4 shadow-soft">
                       <div className="text-xs text-muted">Add subtask</div>
-                      <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                      <div className="mt-2 flex flex-col md:flex-row gap-2">
                         <input
                           value={subTitle}
                           onChange={(e) => setSubTitle(e.target.value)}
                           placeholder="Subtask"
                           className="flex-1 rounded-xl border border-line bg-white/80 px-3 py-2 text-sm outline-none"
                         />
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-center md:justify-end gap-2">
                           <input
                             type="number"
                             min={1}
                             value={subMinutes}
-                            onChange={(e) => setSubMinutes(Math.max(1, Math.round(e.target.valueAsNumber || 1)))}
+                            onChange={(e) =>
+                              setSubMinutes(Math.max(1, Math.round(e.target.valueAsNumber || 1)))
+                            }
                             className="w-[110px] rounded-xl border border-line bg-white/80 px-3 py-2 text-sm outline-none"
                           />
                           <span className="text-sm text-muted">min</span>
                         </div>
                       </div>
-                      <div className="mt-3 flex gap-2">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => {
@@ -243,6 +266,7 @@ export function PlanView(props: {
                             props.onAddSubtask(parent.id, title, subMinutes);
                             setSubTitle("");
                             setSubMinutes(10);
+                            setOpenSubtaskFor(null);
                           }}
                           className="rounded-lg border border-line bg-ink px-3 py-2 text-sm text-paper hover:bg-black transition-colors"
                         >
@@ -257,19 +281,11 @@ export function PlanView(props: {
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setOpenSubtaskFor(parent.id)}
-                      className="rounded-lg border border-line bg-white/70 px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
-                    >
-                      + Subtask
-                    </button>
-                  )}
+                  ) : null}
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         ) : (
           <div className="rounded-xl border border-line bg-white/50 px-5 py-6 text-sm text-muted">
             Add one small task to begin.
@@ -293,6 +309,7 @@ export function PlanView(props: {
                 onToggleDone={props.onToggleDone}
                 onDelete={props.onDelete}
                 onToggleInSprint={props.onToggleInSprint}
+                onDuplicate={props.onDuplicate}
               />
             ))}
           </div>
@@ -312,6 +329,7 @@ export function PlanView(props: {
                 onToggleDone={props.onToggleDone}
                 onDelete={props.onDelete}
                 onToggleInSprint={props.onToggleInSprint}
+                onDuplicate={props.onDuplicate}
               />
             ))}
           </div>

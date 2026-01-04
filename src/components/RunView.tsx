@@ -23,6 +23,7 @@ export function RunView(props: {
   onDoneActive: () => void;
   onDeleteActive: () => void;
   onExtendActive: (minutes: 5 | 10) => void;
+  onReduceActive: (minutes: 5 | 10) => void;
   onInsertBreakNext: (minutes: 5 | 10) => void;
   onStopAfterThisTask: () => void;
   onTogglePause: () => void;
@@ -250,6 +251,21 @@ export function RunView(props: {
                 className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
               >
                 +10 min
+              </button>
+
+              <button
+                type="button"
+                onClick={() => props.onReduceActive(5)}
+                className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
+              >
+                −5 min
+              </button>
+              <button
+                type="button"
+                onClick={() => props.onReduceActive(10)}
+                className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-soft transition-colors"
+              >
+                −10 min
               </button>
 
               <div className="ml-auto flex items-center gap-2">

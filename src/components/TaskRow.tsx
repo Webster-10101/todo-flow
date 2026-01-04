@@ -11,6 +11,7 @@ function clampMinutes(n: number) {
 export function TaskRow(props: {
   task: Task;
   tone?: { bg: string; accent: string };
+  compact?: boolean;
   minutesOverride?: number;
   minutesReadOnly?: boolean;
   onEditTitle: (id: string, title: string) => void;
@@ -35,15 +36,15 @@ export function TaskRow(props: {
   return (
     <div
       className={[
-        "group rounded-xl border border-line bg-white/70 shadow-soft",
-        "px-4 py-3",
+        "group w-full min-w-0 rounded-xl border border-line bg-white/70 shadow-soft",
+        props.compact ? "px-3 py-2" : "px-4 py-3",
         muted ? "opacity-60" : "",
       ].join(" ")}
       style={props.tone ? { backgroundColor: props.tone.bg } : undefined}
     >
       <div className="flex items-start gap-3">
         <div
-          className="mt-0.5 h-6 w-[8px] rounded-full"
+          className={["mt-0.5 rounded-full", props.compact ? "h-5 w-[6px]" : "h-6 w-[8px]"].join(" ")}
           style={props.tone ? { backgroundColor: props.tone.accent } : undefined}
           aria-hidden="true"
         />
@@ -52,7 +53,8 @@ export function TaskRow(props: {
           type="button"
           onClick={() => props.onToggleDone(props.task.id)}
           className={[
-            "mt-0.5 h-6 w-6 rounded-full border border-line flex items-center justify-center",
+            "mt-0.5 rounded-full border border-line flex items-center justify-center",
+            props.compact ? "h-5 w-5" : "h-6 w-6",
             "bg-white hover:bg-soft transition-colors shrink-0",
           ].join(" ")}
           aria-label={props.task.status === "done" ? "Mark as not done" : "Mark as done"}
@@ -71,18 +73,21 @@ export function TaskRow(props: {
             placeholder={isBreak ? "Break" : "Task"}
             aria-label="Task title"
             className={[
-              "w-full bg-transparent text-[15px] outline-none",
+              "w-full bg-transparent outline-none",
+              props.compact ? "text-[14px]" : "text-[15px]",
               muted ? "line-through decoration-[rgba(20,20,20,0.25)]" : "",
             ].join(" ")}
           />
-          <div className="mt-0.5 text-xs text-muted">
-            {isBreak ? "Break" : "Task"}
-            {props.task.extraMinutes > 0 ? ` · +${props.task.extraMinutes}m added` : ""}
-          </div>
+          {!props.compact ? (
+            <div className="mt-0.5 text-xs text-muted">
+              {isBreak ? "Break" : "Task"}
+              {props.task.extraMinutes > 0 ? ` · +${props.task.extraMinutes}m added` : ""}
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className={[props.compact ? "mt-2" : "mt-3", "flex flex-wrap items-center gap-2"].join(" ")}>
         <div className="flex items-center gap-2">
           <input
             type="number"
@@ -94,13 +99,16 @@ export function TaskRow(props: {
               props.onEditMinutes(props.task.id, isNaN(val) ? 1 : clampMinutes(val));
             }}
             disabled={props.minutesReadOnly}
-            className="w-[88px] rounded-lg border border-line bg-white/70 px-2 py-1.5 text-xs text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
+            className={[
+              "rounded-lg border border-line bg-white/70 px-2 py-1.5 text-xs text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]",
+              props.compact ? "w-[72px]" : "w-[88px]",
+            ].join(" ")}
             aria-label="Estimated minutes"
           />
           <span className="text-xs text-muted">min</span>
         </div>
 
-        <div className="sm:ml-auto flex flex-wrap items-center gap-2">
+        <div className="sm:ml-auto flex flex-wrap items-center gap-2 min-w-0">
           {props.onDuplicate ? (
             <button
               type="button"

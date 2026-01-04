@@ -180,6 +180,12 @@ export function App() {
       const next = prev.slice();
       const parentIdx = next.findIndex((t) => t.id === parentId);
       if (parentIdx === -1) return normalizeTasks([st, ...next]);
+      const alreadyHasKids = next.some((t) => t.parentId === parentId);
+      if (!alreadyHasKids) {
+        // Parent becomes container-only once it has subtasks.
+        const parent = next[parentIdx];
+        next[parentIdx] = { ...parent, estimateMinutes: 0, extraMinutes: 0 };
+      }
       let insertAt = parentIdx + 1;
       while (insertAt < next.length && next[insertAt].parentId === parentId) insertAt++;
       next.splice(insertAt, 0, st);
@@ -235,22 +241,33 @@ export function App() {
   }
 
   function toggleDone(id: string) {
-    setTasks((prev) =>
-      normalizeTasks(
-        prev.map((t) => {
-          if (t.id !== id && t.parentId !== id) return t;
-          // If toggling a parent, toggle all children too.
-          if (t.parentId === id) {
-            const nextStatus: Task["status"] = prev.find((x) => x.id === id)?.status === "done" ? "queued" : "done";
-            return { ...t, status: nextStatus };
-          }
-          if (t.id !== id) return t;
-          const nextStatus: Task["status"] = t.status === "done" ? "queued" : "done";
-          const nextSprint = nextStatus === "queued" ? true : t.inSprint;
-          return { ...t, status: nextStatus, inSprint: nextSprint };
-        }),
-      ),
-    );
+    setTasks((prev) => {
+      const next = prev.map((t) => {
+        if (t.id !== id && t.parentId !== id) return t;
+        // If toggling a parent, toggle all children too.
+        if (t.parentId === id) {
+          const nextStatus: Task["status"] = prev.find((x) => x.id === id)?.status === "done" ? "queued" : "done";
+          return { ...t, status: nextStatus };
+        }
+        if (t.id !== id) return t;
+        const nextStatus: Task["status"] = t.status === "done" ? "queued" : "done";
+        const nextSprint = nextStatus === "queued" ? true : t.inSprint;
+        return { ...t, status: nextStatus, inSprint: nextSprint };
+      });
+
+      const toggled = prev.find((t) => t.id === id) ?? null;
+      if (toggled?.parentId) {
+        const parentId = toggled.parentId;
+        const kids = next.filter((t) => t.parentId === parentId);
+        const allKidsDone = kids.length > 0 && kids.every((k) => k.status === "done");
+        const pIdx = next.findIndex((t) => t.id === parentId);
+        if (pIdx !== -1) {
+          next[pIdx] = { ...next[pIdx], status: allKidsDone ? "done" : "queued" };
+        }
+      }
+
+      return normalizeTasks(next);
+    });
     setRunner((r) => {
       if (r.activeTaskId !== id) return r;
       return { ...r, activeTaskId: null, activeStartedAt: null, awaitingNextStart: true };
@@ -297,6 +314,28 @@ export function App() {
     });
   }
 
+  function reorderSubtasks(parentId: string, orderedChildIds: string[]) {
+    setTasks((prev) => {
+      const next = prev.slice();
+      const parentIdx = next.findIndex((t) => t.id === parentId);
+      if (parentIdx === -1) return prev;
+
+      let start = parentIdx + 1;
+      if (start >= next.length) return prev;
+      let end = start;
+      while (end < next.length && next[end].parentId === parentId) end++;
+
+      const existingKids = next.slice(start, end);
+      const byId = new Map(existingKids.map((t) => [t.id, t] as const));
+      const reordered = orderedChildIds.map((id) => byId.get(id)).filter(Boolean) as Task[];
+      // Keep any unexpected/missing kids at the end (shouldn’t happen, but safe).
+      for (const k of existingKids) if (!orderedChildIds.includes(k.id)) reordered.push(k);
+
+      next.splice(start, end - start, ...reordered);
+      return normalizeTasks(next);
+    });
+  }
+
   // --- Runner actions ---
   function getNextStepId(fromTasks: Task[]) {
     const top = fromTasks.filter((t) => t.parentId === null && t.inSprint && t.status !== "done");
@@ -305,9 +344,10 @@ export function App() {
         if (t.status === "queued") return t.id;
         continue;
       }
-      const kids = fromTasks.filter((c) => c.parentId === t.id && c.status !== "done");
-      if (kids.length) {
-        const nextKid = kids.find((c) => c.status === "queued") ?? null;
+      const allKids = fromTasks.filter((c) => c.parentId === t.id);
+      if (allKids.length) {
+        // Container-only parent: only ever run its children.
+        const nextKid = allKids.find((c) => c.status === "queued") ?? null;
         if (nextKid) return nextKid.id;
         continue;
       }
@@ -381,7 +421,20 @@ export function App() {
 
     setTasks((prev) =>
       normalizeTasks(
-        prev.map((t) => (t.id === activeId ? { ...t, status: "done" } : t)),
+        (() => {
+          const next: Task[] = prev.map((t): Task => (t.id === activeId ? { ...t, status: "done" } : t));
+          const doneTask = prev.find((t) => t.id === activeId) ?? null;
+          if (doneTask?.parentId) {
+            const parentId = doneTask.parentId;
+            const kids = next.filter((t) => t.parentId === parentId);
+            const allKidsDone = kids.length > 0 && kids.every((k) => k.status === "done");
+            if (allKidsDone) {
+              const pIdx = next.findIndex((t) => t.id === parentId);
+              if (pIdx !== -1) next[pIdx] = { ...next[pIdx], status: "done" };
+            }
+          }
+          return next;
+        })(),
       ),
     );
     toast.trigger();
@@ -415,6 +468,25 @@ export function App() {
     const id = runner.activeTaskId;
     setTasks((prev) =>
       normalizeTasks(prev.map((t) => (t.id === id ? { ...t, extraMinutes: t.extraMinutes + minutes } : t))),
+    );
+  }
+
+  function reduceActive(minutes: 5 | 10) {
+    if (!runner.activeTaskId) return;
+    const id = runner.activeTaskId;
+    setTasks((prev) =>
+      normalizeTasks(
+        prev.map((t) => {
+          if (t.id !== id) return t;
+          // Reduce extra minutes first, then estimate minutes (min 1).
+          const currentExtra = Math.max(0, t.extraMinutes);
+          const takeFromExtra = Math.min(currentExtra, minutes);
+          const remaining = minutes - takeFromExtra;
+          const nextExtra = currentExtra - takeFromExtra;
+          const nextEstimate = Math.max(1, Math.round(t.estimateMinutes - remaining));
+          return { ...t, extraMinutes: nextExtra, estimateMinutes: nextEstimate };
+        }),
+      ),
     );
   }
 
@@ -566,7 +638,7 @@ export function App() {
         <div
           className={[
             "mb-6 rounded-xl border px-5 py-4 text-sm shadow-soft",
-            pastCutoff ? "border-red-200 bg-red-50 text-red-900" : "border-emerald-200 bg-emerald-50 text-emerald-900",
+            pastCutoff ? "border-rose-200 bg-rose-50 text-rose-900" : "border-teal-200 bg-teal-50 text-teal-900",
           ].join(" ")}
         >
           {pastCutoff ? (
@@ -589,6 +661,7 @@ export function App() {
               onDoneActive={doneActive}
               onDeleteActive={deleteActive}
               onExtendActive={extendActive}
+            onReduceActive={reduceActive}
               onInsertBreakNext={insertBreakNext}
               onStopAfterThisTask={stopAfterThisTask}
               onTogglePause={togglePause}
@@ -606,6 +679,7 @@ export function App() {
             onDuplicate={duplicateTask}
             onInsertBreak={insertBreakInPlan}
             onStartSprint={startSprint}
+            onReorderSubtasks={reorderSubtasks}
             onReorderSprint={reorderSprint}
             onEditTitle={editTitle}
             onEditMinutes={editMinutes}

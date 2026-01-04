@@ -94,18 +94,18 @@ export function TaskRow(props: {
               props.onEditMinutes(props.task.id, isNaN(val) ? 1 : clampMinutes(val));
             }}
             disabled={props.minutesReadOnly}
-            className="w-[96px] rounded-lg border border-line bg-white/70 px-2 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
+            className="w-[88px] rounded-lg border border-line bg-white/70 px-2 py-1.5 text-xs text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
             aria-label="Estimated minutes"
           />
-          <span className="text-sm text-muted">min</span>
+          <span className="text-xs text-muted">min</span>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="sm:ml-auto flex flex-wrap items-center gap-2">
           {props.onDuplicate ? (
             <button
               type="button"
               onClick={() => props.onDuplicate?.(props.task.id)}
-              className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
+              className="rounded-lg border border-line bg-white/60 px-2 py-1.5 text-xs text-ink hover:bg-soft transition-colors"
             >
               Duplicate
             </button>
@@ -115,7 +115,7 @@ export function TaskRow(props: {
             <button
               type="button"
               onClick={() => props.onRequestAddSubtask?.(props.task.id)}
-              className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
+              className="rounded-lg border border-line bg-white/60 px-2 py-1.5 text-xs text-ink hover:bg-soft transition-colors"
             >
               + Subtask
             </button>
@@ -125,7 +125,7 @@ export function TaskRow(props: {
             <button
               type="button"
               onClick={() => props.onToggleInSprint?.(props.task.id)}
-              className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
+              className="rounded-lg border border-line bg-white/60 px-2 py-1.5 text-xs text-ink hover:bg-soft transition-colors"
             >
               {props.task.inSprint ? "Later" : "To sprint"}
             </button>
@@ -134,7 +134,7 @@ export function TaskRow(props: {
           <button
             type="button"
             onClick={() => props.onDelete(props.task.id)}
-            className="rounded-lg border border-line bg-white/60 px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
+            className="rounded-lg border border-line bg-white/60 px-2 py-1.5 text-xs text-ink hover:bg-soft transition-colors"
           >
             Delete
           </button>

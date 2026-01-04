@@ -38,12 +38,40 @@ export function getTaskTotalMinutes(t: Task) {
   return Math.max(0, Math.round(t.estimateMinutes + t.extraMinutes));
 }
 
+export function formatTotalMinutes(totalMinutes: number) {
+  const m = Math.max(0, Math.round(totalMinutes));
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  if (h <= 0) return `${mm}m`;
+  return `${h}h ${mm.toString().padStart(2, "0")}m`;
+}
+
 function getChildren(parentId: string, tasks: Task[]) {
   return tasks.filter((t) => t.parentId === parentId);
 }
 
 function getTopLevelInSprint(tasks: Task[]) {
   return tasks.filter((t) => t.parentId === null && t.status !== "done" && t.inSprint);
+}
+
+export function getSprintPlannedMinutes(tasks: Task[]) {
+  // Sum remaining, in-sprint work. If a parent has children, count children instead of the parent.
+  // This mirrors the PlanView behavior where parent minutes become derived when subtasks exist.
+  let total = 0;
+  const top = tasks.filter((t) => t.parentId === null && t.inSprint && t.status !== "done");
+  for (const t of top) {
+    if (t.kind === "break") {
+      total += getTaskTotalMinutes(t);
+      continue;
+    }
+    const kids = getChildren(t.id, tasks).filter((c) => c.status !== "done");
+    if (kids.length) {
+      for (const c of kids) total += getTaskTotalMinutes(c);
+    } else {
+      total += getTaskTotalMinutes(t);
+    }
+  }
+  return total;
 }
 
 export function getActiveRemainingMs(args: {

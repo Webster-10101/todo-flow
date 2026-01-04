@@ -5,8 +5,10 @@ import type { RunnerState, Settings, Task } from "@/src/lib/types";
 import { getDefaultRunner, getDefaultSettings, getDefaultTasks, loadState, saveState } from "@/src/lib/storage";
 import {
   formatClock,
+  formatTotalMinutes,
   formatMinutesOfDay,
   getProjectedFinishDate,
+  getSprintPlannedMinutes,
   getTodayAtMinutes,
   isProjectedPastCutoff,
 } from "@/src/lib/time";
@@ -16,6 +18,7 @@ import { useDebounce } from "@/src/lib/useDebounce";
 import { PlanView } from "./PlanView";
 import { RunView } from "./RunView";
 import { Toast } from "./Toast";
+import { CompletionView } from "./CompletionView";
 import confetti from "canvas-confetti";
 
 let uidCounter = 0;
@@ -116,6 +119,7 @@ export function App() {
     () => getProjectedFinishDate({ nowMs, runner, tasks }),
     [nowMs, runner, tasks],
   );
+  const sprintTotalMinutes = useMemo(() => getSprintPlannedMinutes(tasks), [tasks]);
   const cutoff = useMemo(() => getTodayAtMinutes(now, settings.latestFinishMinutes), [now, settings.latestFinishMinutes]);
   const pastCutoff = isProjectedPastCutoff({ now, projectedFinish, settings });
 
@@ -293,22 +297,6 @@ export function App() {
     });
   }
 
-  function trimToFit() {
-    const allowedMs = cutoff.getTime() - now.getTime();
-    const allowedMinutes = Math.max(0, Math.floor(allowedMs / 60_000));
-    setTasks((prev) => {
-      let used = 0;
-      const next = prev.map((t) => {
-        if (t.status !== "queued" || !t.inSprint) return t;
-        const total = clampMinutes(t.estimateMinutes + t.extraMinutes);
-        const fits = used + total <= allowedMinutes;
-        if (fits) used += total;
-        return fits ? t : { ...t, inSprint: false };
-      });
-      return normalizeTasks(next);
-    });
-  }
-
   // --- Runner actions ---
   function getNextStepId(fromTasks: Task[]) {
     const top = fromTasks.filter((t) => t.parentId === null && t.inSprint && t.status !== "done");
@@ -327,6 +315,13 @@ export function App() {
     }
     return null;
   }
+
+  const sprintIsComplete = useMemo(() => {
+    if (runner.mode !== "run") return false;
+    if (activeTask) return false;
+    return getNextStepId(tasks) === null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runner.mode, runner.activeTaskId, tasks]);
 
   function startSprint() {
     const firstId = getNextStepId(tasks);
@@ -530,20 +525,20 @@ export function App() {
               <span className="mx-2 text-muted">·</span>
               TodoFlow
             </div>
-            <div className="mt-1 text-2xl text-ink tracking-tight">A calm sprint</div>
+            <div className="mt-1 text-3xl md:text-4xl text-ink tracking-tight">Todo Flow</div>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 rounded-xl border border-line bg-white/70 px-4 py-3 shadow-soft backdrop-blur">
             <div className="min-w-0">
-              <div className="text-xs text-muted">Now</div>
-              <div className="mt-0.5 inline-flex items-center rounded-lg border border-line bg-white/70 px-2 py-1 font-mono tabular-nums tracking-widest text-sm text-ink">
-                {formatClock(now)}
-              </div>
-            </div>
-            <div className="min-w-0">
               <div className="text-xs text-muted">Projected finish</div>
               <div className="mt-0.5 inline-flex items-center rounded-lg border border-line bg-white/70 px-2 py-1 font-mono tabular-nums tracking-widest text-sm text-ink">
                 {formatClock(projectedFinish)}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs text-muted">Total time</div>
+              <div className="mt-0.5 inline-flex items-center rounded-lg border border-line bg-white/70 px-2 py-1 font-mono tabular-nums tracking-widest text-sm text-ink">
+                {formatTotalMinutes(sprintTotalMinutes)}
               </div>
             </div>
             <div className="min-w-0 col-span-2 md:col-span-1">
@@ -568,27 +563,38 @@ export function App() {
           </div>
         </header>
 
-        {pastCutoff ? (
-          <div className="mb-6 rounded-xl border border-line bg-white/60 px-5 py-4 text-sm text-ink shadow-soft">
-            Projected finish is after {formatClock(cutoff)}. Consider trimming or stopping after this task.
-          </div>
-        ) : null}
+        <div
+          className={[
+            "mb-6 rounded-xl border px-5 py-4 text-sm shadow-soft",
+            pastCutoff ? "border-red-200 bg-red-50 text-red-900" : "border-emerald-200 bg-emerald-50 text-emerald-900",
+          ].join(" ")}
+        >
+          {pastCutoff ? (
+            <>Projected finish is after {formatClock(cutoff)}. Consider stopping after this task.</>
+          ) : (
+            <>On track to finish before {formatClock(cutoff)}.</>
+          )}
+        </div>
 
         {runner.mode === "run" ? (
-          <RunView
-            now={now}
-            tasks={tasks}
-            runner={runner}
-            settings={settings}
-            onStartNext={startNext}
-            onDoneActive={doneActive}
-            onDeleteActive={deleteActive}
-            onExtendActive={extendActive}
-            onInsertBreakNext={insertBreakNext}
-            onStopAfterThisTask={stopAfterThisTask}
-            onTogglePause={togglePause}
-            onExitToPlan={exitToPlan}
-          />
+          sprintIsComplete ? (
+            <CompletionView onBackToPlan={exitToPlan} />
+          ) : (
+            <RunView
+              now={now}
+              tasks={tasks}
+              runner={runner}
+              settings={settings}
+              onStartNext={startNext}
+              onDoneActive={doneActive}
+              onDeleteActive={deleteActive}
+              onExtendActive={extendActive}
+              onInsertBreakNext={insertBreakNext}
+              onStopAfterThisTask={stopAfterThisTask}
+              onTogglePause={togglePause}
+              onExitToPlan={exitToPlan}
+            />
+          )
         ) : (
           <PlanView
             now={now}
@@ -600,7 +606,6 @@ export function App() {
             onDuplicate={duplicateTask}
             onInsertBreak={insertBreakInPlan}
             onStartSprint={startSprint}
-            onTrimToFit={trimToFit}
             onReorderSprint={reorderSprint}
             onEditTitle={editTitle}
             onEditMinutes={editMinutes}
@@ -630,18 +635,38 @@ function randomPraise() {
 }
 
 function fireConfetti() {
-  // Subtle, calm burst (no loud full-screen party)
+  // More exciting (but still tasteful) multi-burst celebration.
   try {
-    confetti({
-      particleCount: 40,
-      spread: 55,
-      startVelocity: 22,
-      gravity: 0.9,
-      scalar: 0.8,
-      ticks: 140,
-      origin: { x: 0.5, y: 0.15 },
-      colors: ["#1F2937", "#6B7280", "#93C5FD", "#A7F3D0", "#FDE68A"],
-    });
+    const base = {
+      spread: 75,
+      startVelocity: 34,
+      gravity: 0.95,
+      scalar: 0.95,
+      ticks: 220,
+      colors: ["#064E3B", "#10B981", "#34D399", "#A7F3D0", "#FDE68A", "#93C5FD"],
+    } as const;
+
+    // Center pop
+    confetti({ ...base, particleCount: 110, origin: { x: 0.5, y: 0.18 } });
+
+    // Side cannons
+    setTimeout(() => confetti({ ...base, particleCount: 80, angle: 60, origin: { x: 0.08, y: 0.25 } }), 110);
+    setTimeout(() => confetti({ ...base, particleCount: 80, angle: 120, origin: { x: 0.92, y: 0.25 } }), 110);
+
+    // Sparkle topper
+    setTimeout(
+      () =>
+        confetti({
+          ...base,
+          particleCount: 70,
+          spread: 110,
+          startVelocity: 22,
+          gravity: 0.85,
+          scalar: 0.8,
+          origin: { x: 0.5, y: 0.12 },
+        }),
+      260,
+    );
   } catch {
     // ignore if canvas unavailable
   }

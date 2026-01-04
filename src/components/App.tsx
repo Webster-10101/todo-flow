@@ -644,7 +644,7 @@ function fireConfetti() {
       scalar: 0.95,
       ticks: 220,
       colors: ["#064E3B", "#10B981", "#34D399", "#A7F3D0", "#FDE68A", "#93C5FD"],
-    } as const;
+    };
 
     // Center pop
     confetti({ ...base, particleCount: 110, origin: { x: 0.5, y: 0.18 } });

@@ -33,6 +33,7 @@ export function RunView(props: {
   useInterval(() => setNowMs(Date.now()), 250);
 
   const { on: timeUpPulseOn, trigger: triggerTimeUpPulse } = useTransientFlag(900);
+  const hasPlayedDing = useRef(false);
   const doneButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const activeTask = useMemo(
@@ -94,6 +95,36 @@ export function RunView(props: {
   useEffect(() => {
     if (isTimeUp) doneButtonRef.current?.focus();
   }, [isTimeUp]);
+
+  // Play ding sound when time is up
+  useEffect(() => {
+    if (isTimeUp && !hasPlayedDing.current) {
+      hasPlayedDing.current = true;
+      playDing();
+    }
+    if (!isTimeUp) {
+      hasPlayedDing.current = false;
+    }
+  }, [isTimeUp]);
+
+  // Update tab title with remaining time
+  useEffect(() => {
+    if (activeTask && props.runner.activeStartedAt) {
+      const timeStr = formatCountdown(remainingMs);
+      if (isTimeUp) {
+        document.title = `Done! - TodoFlow`;
+      } else if (props.runner.pausedAt) {
+        document.title = `${timeStr} (paused) - TodoFlow`;
+      } else {
+        document.title = `${timeStr} - TodoFlow`;
+      }
+    } else {
+      document.title = "TodoFlow";
+    }
+    return () => {
+      document.title = "TodoFlow";
+    };
+  }, [activeTask, props.runner.activeStartedAt, props.runner.pausedAt, remainingMs, isTimeUp]);
 
   const activeEndAt = useMemo(() => {
     if (!activeTask || !props.runner.activeStartedAt) return null;
@@ -330,4 +361,41 @@ export function RunView(props: {
   );
 }
 
+function playDing() {
+  try {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
 
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+
+    // Pleasant bell-like tone
+    oscillator.frequency.setValueAtTime(830, ctx.currentTime); // ~G#5
+    oscillator.type = "sine";
+
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
+
+    oscillator.start(ctx.currentTime);
+    oscillator.stop(ctx.currentTime + 0.8);
+
+    // Second tone for a pleasant two-tone ding
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+
+    osc2.frequency.setValueAtTime(1046, ctx.currentTime + 0.15); // ~C6
+    osc2.type = "sine";
+
+    gain2.gain.setValueAtTime(0, ctx.currentTime);
+    gain2.gain.setValueAtTime(0.25, ctx.currentTime + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1);
+
+    osc2.start(ctx.currentTime + 0.15);
+    osc2.stop(ctx.currentTime + 1);
+  } catch {
+    // Audio not available
+  }
+}

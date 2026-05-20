@@ -14,7 +14,6 @@ import {
 } from "@dnd-kit/core";
 import {
   CANVAS_END_MIN,
-  CANVAS_RANGE_MIN,
   CANVAS_START_MIN,
   MIN_BLOCK_HEIGHT_PX,
   SCHEDULE_SLOT_MIN,
@@ -121,6 +120,7 @@ function TaskBlock(props: {
   minutesReadOnly?: boolean;
   minutesOverride?: number;
   maxMinutes?: number;
+  canvasStartMin: number;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: props.task.id,
@@ -131,8 +131,8 @@ function TaskBlock(props: {
   const [resizeDelta, setResizeDelta] = useState(0);
   const resizeRef = useRef({ startY: 0, startMin: 0, captured: false });
 
-  const startMin = props.task.scheduledStartMinutes ?? CANVAS_START_MIN;
-  const topPx = (startMin - CANVAS_START_MIN) * props.pxPerMinute;
+  const startMin = props.task.scheduledStartMinutes ?? props.canvasStartMin;
+  const topPx = (startMin - props.canvasStartMin) * props.pxPerMinute;
   const baseHeightPx = Math.max(MIN_BLOCK_HEIGHT_PX, props.minutes * props.pxPerMinute);
   const heightPx = Math.max(
     SCHEDULE_SLOT_MIN * props.pxPerMinute,
@@ -392,7 +392,30 @@ export function TaskCanvas(props: {
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
   );
 
-  const canvasHeightPx = CANVAS_RANGE_MIN * props.pxPerMinute;
+  // Dynamic canvas start: trim the empty hours above "now". Start the visible
+  // canvas at hour-floor(now - 60min), but pull earlier if any queued task is
+  // scheduled before that. Clamps to the hard 8am floor.
+  const nowMinForStart = props.now.getHours() * 60 + props.now.getMinutes();
+  const earliestQueuedStart = useMemo(() => {
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const t of props.tasks) {
+      if (t.parentId !== null) continue;
+      if (t.status === "done") continue;
+      if (t.scheduledStartMinutes == null) continue;
+      earliest = Math.min(earliest, t.scheduledStartMinutes);
+    }
+    return earliest;
+  }, [props.tasks]);
+  const effectiveStartMin = useMemo(() => {
+    const nowFloor = Math.floor((nowMinForStart - 60) / 60) * 60;
+    const earliestFloor =
+      earliestQueuedStart === Number.POSITIVE_INFINITY
+        ? nowFloor
+        : Math.floor(earliestQueuedStart / 60) * 60;
+    return Math.max(CANVAS_START_MIN, Math.min(nowFloor, earliestFloor));
+  }, [nowMinForStart, earliestQueuedStart]);
+
+  const canvasHeightPx = (CANVAS_END_MIN - effectiveStartMin) * props.pxPerMinute;
   const slotPx = SCHEDULE_SLOT_MIN * props.pxPerMinute; // 15-min line
 
   // Latch the drag transform to the 15-min grid so blocks visually snap as you
@@ -436,14 +459,14 @@ export function TaskCanvas(props: {
 
   // Build gutter labels at every 15 min: hour labels bold, :15/:30/:45 faded.
   const gutterLabels: number[] = [];
-  for (let m = CANVAS_START_MIN; m <= CANVAS_END_MIN; m += SCHEDULE_SLOT_MIN) {
+  for (let m = effectiveStartMin; m <= CANVAS_END_MIN; m += SCHEDULE_SLOT_MIN) {
     gutterLabels.push(m);
   }
 
   // Current time line — only visible if "now" falls inside the canvas window.
   const nowMin = props.now.getHours() * 60 + props.now.getMinutes();
-  const nowInCanvas = nowMin >= CANVAS_START_MIN && nowMin <= CANVAS_END_MIN;
-  const nowTopPx = (nowMin - CANVAS_START_MIN) * props.pxPerMinute;
+  const nowInCanvas = nowMin >= effectiveStartMin && nowMin <= CANVAS_END_MIN;
+  const nowTopPx = (nowMin - effectiveStartMin) * props.pxPerMinute;
   const nowLabel = `${Math.floor(nowMin / 60).toString().padStart(2, "0")}:${(nowMin % 60).toString().padStart(2, "0")}`;
 
   // On first mount, scroll the page so the now-line sits ~80px from the top
@@ -507,7 +530,7 @@ export function TaskCanvas(props: {
                     ? "text-[12px] font-medium text-ink"
                     : "text-[10px] text-muted/60",
                 ].join(" ")}
-                style={{ top: (m - CANVAS_START_MIN) * props.pxPerMinute }}
+                style={{ top: (m - effectiveStartMin) * props.pxPerMinute }}
               >
                 {isHour ? `${h.toString().padStart(2, "0")}:00` : `:${min.toString().padStart(2, "0")}`}
               </div>
@@ -524,7 +547,7 @@ export function TaskCanvas(props: {
             if (e.target !== e.currentTarget) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const yOffset = e.clientY - rect.top;
-            const clickedMin = CANVAS_START_MIN + yOffset / props.pxPerMinute;
+            const clickedMin = effectiveStartMin + yOffset / props.pxPerMinute;
             const snapped = snapToCanvas(clickedMin);
             props.onCreateTaskAtTime(snapped);
           }}
@@ -554,7 +577,7 @@ export function TaskCanvas(props: {
             const row = scheduleById.get(t.id);
             if (!row) return null;
             // Cap resize at the start of the next block below (if any).
-            const myStart = t.scheduledStartMinutes ?? CANVAS_START_MIN;
+            const myStart = t.scheduledStartMinutes ?? effectiveStartMin;
             const nextStart = topLevel
               .filter(
                 (o) =>
@@ -588,6 +611,7 @@ export function TaskCanvas(props: {
                 minutesReadOnly={props.minutesReadOnlyById?.[t.id]}
                 minutesOverride={props.minutesOverrideById?.[t.id]}
                 maxMinutes={maxMinutes}
+                canvasStartMin={effectiveStartMin}
               />
             );
           })}

@@ -10,6 +10,7 @@ import {
   useDraggable,
   useSensor,
   useSensors,
+  type Modifier,
 } from "@dnd-kit/core";
 import {
   CANVAS_END_MIN,
@@ -21,12 +22,87 @@ import {
 import { paletteForId } from "@/src/lib/palette";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+// Small inline icons sized for the title row. Stroke-based so they pick up
+// `currentColor` and inherit hover states from the button.
+const iconProps = {
+  width: 13,
+  height: 13,
+  viewBox: "0 0 16 16",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.5,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  "aria-hidden": true,
+};
+
+function PlusIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="5" y="5" width="8.5" height="8.5" rx="1.5" />
+      <path d="M10.5 5V3.5A1 1 0 0 0 9.5 2.5h-6A1 1 0 0 0 2.5 3.5v6A1 1 0 0 0 3.5 10.5H5" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg {...iconProps} strokeWidth={2}>
+      <path d="M3 8.5L6.5 12 13 4.5" />
+    </svg>
+  );
+}
+
+const iconBtnClass =
+  "shrink-0 inline-flex h-5 w-5 items-center justify-center rounded text-muted hover:text-ink hover:bg-ink/5 transition-colors";
+
 function snapToCanvas(min: number) {
   const snapped = Math.round(min / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN;
   return Math.max(
     CANVAS_START_MIN,
     Math.min(CANVAS_END_MIN - SCHEDULE_SLOT_MIN, snapped),
   );
+}
+
+// Given a desired start and a duration, return the closest 15-min slot that
+// doesn't overlap any of `others`. Searches outward from `desired` in slot
+// increments, alternating below/above. Returns null if no slot found within
+// the search window (caller treats null as "snap back to original").
+function findNonOverlappingStart(args: {
+  desired: number;
+  duration: number;
+  others: Array<{ start: number; end: number }>;
+}): number | null {
+  const { desired, duration, others } = args;
+  const overlaps = (start: number) => {
+    const end = start + duration;
+    return others.some((o) => start < o.end && end > o.start);
+  };
+  if (!overlaps(desired)) return desired;
+  const maxDeltaMin = 120; // search ±2 hours
+  for (let d = SCHEDULE_SLOT_MIN; d <= maxDeltaMin; d += SCHEDULE_SLOT_MIN) {
+    const below = snapToCanvas(desired + d);
+    if (!overlaps(below)) return below;
+    const above = snapToCanvas(desired - d);
+    if (!overlaps(above)) return above;
+  }
+  return null;
 }
 
 function TaskBlock(props: {
@@ -44,6 +120,7 @@ function TaskBlock(props: {
   childCount?: number;
   minutesReadOnly?: boolean;
   minutesOverride?: number;
+  maxMinutes?: number;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: props.task.id,
@@ -96,10 +173,13 @@ function TaskBlock(props: {
     const dy = e.clientY - resizeRef.current.startY;
     const dyMin = dy / props.pxPerMinute;
     const proposed = resizeRef.current.startMin + dyMin;
-    const snapped = Math.max(
+    let snapped = Math.max(
       SCHEDULE_SLOT_MIN,
       Math.round(proposed / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN,
     );
+    if (props.maxMinutes != null) {
+      snapped = Math.min(snapped, props.maxMinutes);
+    }
     resizeRef.current.captured = false;
     setResizeDelta(0);
     try {
@@ -129,9 +209,9 @@ function TaskBlock(props: {
         {...listeners}
         className={[
           "relative h-full w-full overflow-hidden rounded-lg border shadow-soft flex flex-col",
-          isBreak ? "border-emerald-200 bg-emerald-50/90" : "border-line",
+          isBreak ? "border-emerald-200/80 bg-emerald-50/90" : "border-line/80",
           muted ? "opacity-55 saturate-50" : "",
-          "px-2 py-1",
+          "pl-3 pr-2 py-1.5",
         ].join(" ")}
         style={{
           cursor: isDragging ? "grabbing" : "grab",
@@ -158,8 +238,12 @@ function TaskBlock(props: {
             onPointerDown={swallow}
             disabled={props.hasChildren}
             className={[
-              "h-4 w-4 shrink-0 rounded-full border border-line flex items-center justify-center text-[9px]",
-              props.hasChildren ? "bg-soft cursor-not-allowed" : "bg-white hover:bg-soft transition-colors",
+              "h-[14px] w-[14px] shrink-0 rounded-full border flex items-center justify-center transition-colors",
+              props.hasChildren
+                ? "border-line/70 bg-white/60 cursor-not-allowed text-muted"
+                : muted
+                  ? "border-ink/60 bg-ink/80 text-white"
+                  : "border-line/80 bg-white/80 hover:border-ink/40",
             ].join(" ")}
             aria-label={
               props.hasChildren
@@ -169,7 +253,7 @@ function TaskBlock(props: {
                   : "Mark done"
             }
           >
-            {muted ? "✓" : props.hasChildren ? "·" : ""}
+            {muted ? <CheckIcon /> : props.hasChildren ? <span className="text-[10px] leading-none">·</span> : null}
           </button>
           <input
             value={props.task.title}
@@ -179,8 +263,8 @@ function TaskBlock(props: {
             aria-label="Task title"
             autoFocus={props.task.title === ""}
             className={[
-              "flex-1 min-w-0 bg-transparent outline-none truncate",
-              "text-[13px] sm:text-sm",
+              "flex-1 min-w-0 bg-transparent outline-none truncate ml-0.5",
+              "text-[13px] sm:text-sm font-medium tracking-tight text-ink/90",
               muted ? "line-through decoration-[rgba(20,20,20,0.25)]" : "",
             ].join(" ")}
           />
@@ -192,7 +276,10 @@ function TaskBlock(props: {
                 props.onOpenSubtasks?.(props.task.id, rect);
               }}
               onPointerDown={swallow}
-              className="shrink-0 inline-flex items-center gap-0.5 px-1 text-[13px] leading-none text-muted hover:text-ink transition-colors"
+              className={[
+                iconBtnClass,
+                props.childCount && props.childCount > 0 ? "w-auto px-1 gap-0.5" : "",
+              ].join(" ")}
               aria-label={
                 props.childCount && props.childCount > 0
                   ? `Subtasks (${props.childCount})`
@@ -204,9 +291,9 @@ function TaskBlock(props: {
                   : "Add subtask"
               }
             >
-              <span>+</span>
+              <PlusIcon />
               {props.childCount && props.childCount > 0 ? (
-                <span className="rounded-full bg-ink/10 px-1 text-[10px] tabular-nums leading-none py-px">
+                <span className="rounded-full bg-ink/10 px-1 text-[9px] font-medium tabular-nums leading-none py-px">
                   {props.childCount}
                 </span>
               ) : null}
@@ -217,27 +304,27 @@ function TaskBlock(props: {
               type="button"
               onClick={() => props.onDuplicate?.(props.task.id)}
               onPointerDown={swallow}
-              className="shrink-0 px-1 text-[11px] leading-none text-muted hover:text-ink transition-colors"
+              className={iconBtnClass}
               aria-label="Duplicate task"
               title="Duplicate"
             >
-              ⎘
+              <CopyIcon />
             </button>
           ) : null}
           <button
             type="button"
             onClick={() => props.onDelete(props.task.id)}
             onPointerDown={swallow}
-            className="shrink-0 px-1 text-[14px] leading-none text-muted hover:text-rose-700 transition-colors"
+            className={[iconBtnClass, "hover:text-rose-700 hover:bg-rose-50"].join(" ")}
             aria-label="Delete task"
             title="Delete"
           >
-            ×
+            <XIcon />
           </button>
         </div>
         ) : null}
         {showMetaRow ? (
-          <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
+          <div className="mt-1 ml-[18px] flex items-center gap-1.5 text-[11px] text-muted">
             <input
               type="number"
               min={1}
@@ -254,12 +341,12 @@ function TaskBlock(props: {
               }}
               onPointerDown={swallow}
               disabled={props.minutesReadOnly}
-              className="w-10 bg-transparent outline-none border-b border-line/50 tabular-nums"
+              className="w-9 bg-transparent outline-none border-b border-line/40 tabular-nums text-right focus:border-ink/50 transition-colors"
               aria-label="Minutes"
             />
-            <span>min</span>
-            <span className="ml-auto tabular-nums">
-              → {formatClock(new Date(props.endsAtMs))}
+            <span className="text-muted/80">min</span>
+            <span className="ml-auto tabular-nums text-muted/80">
+              ends {formatClock(new Date(props.endsAtMs))}
             </span>
           </div>
         ) : null}
@@ -269,11 +356,11 @@ function TaskBlock(props: {
             onPointerMove={onResizeMove}
             onPointerUp={onResizeEnd}
             onPointerCancel={onResizeEnd}
-            className="absolute left-2 right-2 bottom-0 h-2 cursor-ns-resize group/handle"
+            className="absolute left-3 right-3 bottom-0 h-2.5 cursor-ns-resize group/handle"
             style={{ touchAction: "none" }}
             aria-label="Resize task duration"
           >
-            <div className="absolute inset-x-0 bottom-0.5 mx-auto h-0.5 w-8 rounded-full bg-ink/20 group-hover/handle:bg-ink/50 transition-colors" />
+            <div className="absolute inset-x-0 bottom-1 mx-auto h-[3px] w-10 rounded-full bg-ink/15 group-hover/handle:bg-ink/45 transition-colors" />
           </div>
         ) : null}
       </div>
@@ -307,6 +394,17 @@ export function TaskCanvas(props: {
 
   const canvasHeightPx = CANVAS_RANGE_MIN * props.pxPerMinute;
   const slotPx = SCHEDULE_SLOT_MIN * props.pxPerMinute; // 15-min line
+
+  // Latch the drag transform to the 15-min grid so blocks visually snap as you
+  // move them, instead of free-floating to pixel positions.
+  const snapToSlotModifier = useMemo<Modifier>(
+    () =>
+      ({ transform }) => ({
+        ...transform,
+        y: Math.round(transform.y / slotPx) * slotPx,
+      }),
+    [slotPx],
+  );
   const halfHourPx = slotPx * 2; // 30-min line
   const hourPx = slotPx * 4; // 60-min line
   const gridBackground = useMemo(
@@ -367,13 +465,30 @@ export function TaskCanvas(props: {
     <DndContext
       sensors={sensors}
       autoScroll={false}
+      modifiers={[snapToSlotModifier]}
       onDragEnd={(e) => {
         const task = topLevel.find((t) => t.id === String(e.active.id));
         if (!task || task.scheduledStartMinutes == null) return;
         const dyMin = e.delta.y / props.pxPerMinute;
-        const snapped = snapToCanvas(task.scheduledStartMinutes + dyMin);
-        if (snapped !== task.scheduledStartMinutes) {
-          props.onSetTaskTime(task.id, snapped);
+        const desired = snapToCanvas(task.scheduledStartMinutes + dyMin);
+        if (desired === task.scheduledStartMinutes) return;
+        const row = scheduleById.get(task.id);
+        const duration = row?.minutes ?? props.schedule.rows.find((r) => r.taskId === task.id)?.minutes ?? 15;
+        const others = topLevel
+          .filter((t) => t.id !== task.id && t.scheduledStartMinutes != null)
+          .map((t) => {
+            const r = scheduleById.get(t.id);
+            const start = t.scheduledStartMinutes as number;
+            const end = start + (r?.minutes ?? 15);
+            return { start, end };
+          });
+        const placed = findNonOverlappingStart({
+          desired,
+          duration,
+          others,
+        });
+        if (placed != null && placed !== task.scheduledStartMinutes) {
+          props.onSetTaskTime(task.id, placed);
         }
       }}
     >
@@ -438,6 +553,23 @@ export function TaskCanvas(props: {
           {topLevel.map((t) => {
             const row = scheduleById.get(t.id);
             if (!row) return null;
+            // Cap resize at the start of the next block below (if any).
+            const myStart = t.scheduledStartMinutes ?? CANVAS_START_MIN;
+            const nextStart = topLevel
+              .filter(
+                (o) =>
+                  o.id !== t.id &&
+                  o.scheduledStartMinutes != null &&
+                  (o.scheduledStartMinutes as number) >= myStart + row.minutes,
+              )
+              .reduce<number | null>((acc, o) => {
+                const s = o.scheduledStartMinutes as number;
+                return acc == null ? s : Math.min(acc, s);
+              }, null);
+            const maxByNext = nextStart != null ? nextStart - myStart : null;
+            const maxByCanvas = CANVAS_END_MIN - myStart;
+            const maxMinutes =
+              maxByNext != null ? Math.min(maxByNext, maxByCanvas) : maxByCanvas;
             return (
               <TaskBlock
                 key={t.id}
@@ -455,6 +587,7 @@ export function TaskCanvas(props: {
                 childCount={props.childCountById?.[t.id]}
                 minutesReadOnly={props.minutesReadOnlyById?.[t.id]}
                 minutesOverride={props.minutesOverrideById?.[t.id]}
+                maxMinutes={maxMinutes}
               />
             );
           })}

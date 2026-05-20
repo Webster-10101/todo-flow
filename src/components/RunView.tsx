@@ -96,16 +96,81 @@ export function RunView(props: {
     if (isTimeUp) doneButtonRef.current?.focus();
   }, [isTimeUp]);
 
-  // Play ding sound when time is up
+  // Play ding sound + system notification when time is up
   useEffect(() => {
     if (isTimeUp && !hasPlayedDing.current) {
       hasPlayedDing.current = true;
       playDing();
+      maybeFireNotification(activeTask?.title ?? "Active task");
     }
     if (!isTimeUp) {
       hasPlayedDing.current = false;
     }
-  }, [isTimeUp]);
+  }, [isTimeUp, activeTask?.title]);
+
+  // Global keyboard shortcuts while in run mode
+  const {
+    onTogglePause,
+    onExitToPlan,
+    onDoneActive,
+    onExtendActive,
+    onReduceActive,
+    onInsertBreakNext,
+  } = props;
+  const runnerActiveId = props.runner.activeTaskId;
+  const runnerActiveStartedAt = props.runner.activeStartedAt;
+  useEffect(() => {
+    function isTypingTarget(t: EventTarget | null): boolean {
+      if (!t || !(t instanceof HTMLElement)) return false;
+      const tag = t.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (t.isContentEditable) return true;
+      return false;
+    }
+
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+
+      const k = e.key.toLowerCase();
+      if (e.key === " " || k === "spacebar") {
+        e.preventDefault();
+        onTogglePause();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onExitToPlan();
+        return;
+      }
+      if (!runnerActiveId || !runnerActiveStartedAt) return;
+      if (k === "d") {
+        e.preventDefault();
+        onDoneActive();
+      } else if (k === "e") {
+        e.preventDefault();
+        onExtendActive(5);
+      } else if (k === "r") {
+        e.preventDefault();
+        onReduceActive(5);
+      } else if (k === "b") {
+        e.preventDefault();
+        onInsertBreakNext(5);
+      }
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    onTogglePause,
+    onExitToPlan,
+    onDoneActive,
+    onExtendActive,
+    onReduceActive,
+    onInsertBreakNext,
+    runnerActiveId,
+    runnerActiveStartedAt,
+  ]);
 
   // Update tab title with remaining time
   useEffect(() => {
@@ -359,6 +424,22 @@ export function RunView(props: {
       </div>
     </div>
   );
+}
+
+function maybeFireNotification(taskTitle: string) {
+  if (typeof window === "undefined") return;
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission !== "granted") return;
+  if (document.visibilityState !== "hidden") return;
+  try {
+    new Notification("TodoFlow — time's up", {
+      body: taskTitle,
+      silent: false,
+      tag: "todoflow-timeup",
+    });
+  } catch {
+    // Some browsers throw if invoked outside a service worker; ignore.
+  }
 }
 
 function playDing() {

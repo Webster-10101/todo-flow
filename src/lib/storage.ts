@@ -13,12 +13,16 @@ function isValidTaskKind(kind: unknown): kind is TaskKind {
 function isValidTask(obj: unknown): obj is Task {
   if (!obj || typeof obj !== "object") return false;
   const t = obj as Record<string, unknown>;
-  
+
   return (
     typeof t.id === "string" &&
     typeof t.title === "string" &&
+    (t.notes === undefined || typeof t.notes === "string") &&
     typeof t.estimateMinutes === "number" &&
     typeof t.extraMinutes === "number" &&
+    (t.scheduledStartMinutes === undefined ||
+      t.scheduledStartMinutes === null ||
+      typeof t.scheduledStartMinutes === "number") &&
     isValidTaskStatus(t.status) &&
     isValidTaskKind(t.kind) &&
     (t.parentId === undefined || t.parentId === null || typeof t.parentId === "string") &&
@@ -48,12 +52,17 @@ function isValidRunnerState(obj: unknown): obj is RunnerState {
 function isValidSettings(obj: unknown): obj is Settings {
   if (!obj || typeof obj !== "object") return false;
   const s = obj as Record<string, unknown>;
-  
-  return typeof s.latestFinishMinutes === "number";
+
+  return (
+    typeof s.latestFinishMinutes === "number" &&
+    (s.scheduledStartMinutes === undefined ||
+      s.scheduledStartMinutes === null ||
+      typeof s.scheduledStartMinutes === "number")
+  );
 }
 
 export function getDefaultSettings(): Settings {
-  return { latestFinishMinutes: 18 * 60 };
+  return { latestFinishMinutes: 18 * 60, scheduledStartMinutes: null };
 }
 
 export function getDefaultRunner(): RunnerState {
@@ -83,11 +92,14 @@ export function loadState(): PersistedStateV1 | null {
     const parsed = JSON.parse(raw) as Partial<PersistedStateV1> | null;
     if (!parsed || parsed.version !== 1) return null;
 
-    // Validate and filter tasks
+    // Validate and filter tasks (backfill optional fields for older saved state)
     const validTasks = Array.isArray(parsed.tasks)
-      ? parsed.tasks
-          .filter(isValidTask)
-          .map((t) => ({ ...t, parentId: t.parentId ?? null }))
+      ? parsed.tasks.filter(isValidTask).map((t) => ({
+          ...t,
+          parentId: t.parentId ?? null,
+          notes: t.notes ?? "",
+          scheduledStartMinutes: t.scheduledStartMinutes ?? null,
+        }))
       : [];
 
     // Validate runner state
@@ -96,9 +108,13 @@ export function loadState(): PersistedStateV1 | null {
       : getDefaultRunner();
 
     // Validate settings
-    const validSettings = parsed.settings && isValidSettings(parsed.settings)
-      ? parsed.settings
-      : getDefaultSettings();
+    const validSettings: Settings =
+      parsed.settings && isValidSettings(parsed.settings)
+        ? {
+            latestFinishMinutes: parsed.settings.latestFinishMinutes,
+            scheduledStartMinutes: parsed.settings.scheduledStartMinutes ?? null,
+          }
+        : getDefaultSettings();
 
     return {
       version: 1,

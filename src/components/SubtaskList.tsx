@@ -32,6 +32,7 @@ function SortableSubtaskRow(props: {
   index: number;
   onEditTitle: (id: string, title: string) => void;
   onEditMinutes: (id: string, minutes: number) => void;
+  onEditNotes?: (id: string, notes: string) => void;
   onToggleDone: (id: string) => void;
   onDelete: (id: string) => void;
   onDuplicate?: (id: string) => void;
@@ -66,6 +67,7 @@ function SortableSubtaskRow(props: {
           compact
           onEditTitle={props.onEditTitle}
           onEditMinutes={props.onEditMinutes}
+          onEditNotes={props.onEditNotes}
           onToggleDone={props.onToggleDone}
           onDelete={props.onDelete}
           onDuplicate={props.onDuplicate}
@@ -80,6 +82,7 @@ export function SubtaskList(props: {
   onReorder: (orderedIds: string[]) => void;
   onEditTitle: (id: string, title: string) => void;
   onEditMinutes: (id: string, minutes: number) => void;
+  onEditNotes?: (id: string, notes: string) => void;
   onToggleDone: (id: string) => void;
   onDelete: (id: string) => void;
   onDuplicate?: (id: string) => void;
@@ -113,6 +116,7 @@ export function SubtaskList(props: {
               index={idx}
               onEditTitle={props.onEditTitle}
               onEditMinutes={props.onEditMinutes}
+              onEditNotes={props.onEditNotes}
               onToggleDone={props.onToggleDone}
               onDelete={props.onDelete}
               onDuplicate={props.onDuplicate}

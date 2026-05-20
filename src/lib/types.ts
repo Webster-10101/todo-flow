@@ -4,8 +4,12 @@ export type TaskStatus = "queued" | "active" | "done";
 export type Task = {
   id: string;
   title: string;
+  notes: string;
   estimateMinutes: number;
   extraMinutes: number;
+  // Absolute scheduled clock-time in minutes from midnight (e.g. 540 = 09:00).
+  // Null for tasks not in the sprint (Later/Done). Snapped to 30 min.
+  scheduledStartMinutes: number | null;
   status: TaskStatus;
   kind: TaskKind;
   // If set, this task is a subtask belonging under a parent task.
@@ -34,6 +38,8 @@ export type RunnerState = {
 export type Settings = {
   // Minutes from midnight local time (e.g. 18:00 => 1080)
   latestFinishMinutes: number;
+  // Optional scheduled day-start time; null = "start now"
+  scheduledStartMinutes: number | null;
 };
 
 export type PersistedStateV1 = {

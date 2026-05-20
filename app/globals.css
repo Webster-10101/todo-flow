@@ -8,7 +8,7 @@
 
 html,
 body {
-  height: 100%;
+  min-height: 100%;
 }
 
 body {
@@ -16,6 +16,7 @@ body {
     radial-gradient(1000px 800px at 85% 30%, rgba(140, 240, 200, 0.14), transparent 60%),
     radial-gradient(900px 700px at 40% 90%, rgba(255, 190, 120, 0.10), transparent 55%),
     theme(colors.paper);
+  background-attachment: fixed;
   color: theme(colors.ink);
 }
 

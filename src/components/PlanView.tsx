@@ -1,55 +1,48 @@
 "use client";
 
 import type { Settings, Task } from "@/src/lib/types";
-import { formatMinutesOfDay, isProjectedPastCutoff } from "@/src/lib/time";
-import { useEffect, useMemo, useState } from "react";
-import { TaskList } from "./TaskList";
+import {
+  formatMinutesOfDay,
+  isProjectedPastCutoff,
+  type SprintSchedule,
+} from "@/src/lib/time";
+import { useGridPxPerMin } from "@/src/lib/layout";
+import { useMemo, useState } from "react";
+import { TaskCanvas } from "./TaskCanvas";
 import { TaskRow } from "./TaskRow";
-import { SubtaskList } from "./SubtaskList";
+import { SubtasksPopover } from "./SubtasksPopover";
 
 export function PlanView(props: {
   now: Date;
   tasks: Task[];
   settings: Settings;
   projectedFinish: Date;
+  schedule: SprintSchedule;
   onAddTask: (title: string, minutes: number) => void;
+  onAddTaskAtTime: (scheduledStartMinutes: number) => void;
   onAddSubtask: (parentId: string, title: string, minutes: number) => void;
   onDuplicate: (id: string) => void;
   onInsertBreak: (minutes: 5 | 10) => void;
   onStartSprint: () => void;
   onReorderSubtasks: (parentId: string, orderedChildIds: string[]) => void;
-  onReorderSprint: (orderedIds: string[]) => void;
+  onSetTaskTime: (id: string, minutes: number) => void;
   onEditTitle: (id: string, title: string) => void;
   onEditMinutes: (id: string, minutes: number) => void;
+  onEditNotes: (id: string, notes: string) => void;
   onToggleDone: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleInSprint: (id: string) => void;
+  onStartFreshDay: () => void;
+  onOpenExport: () => void;
 }) {
   const [newTitle, setNewTitle] = useState("");
   const [newMinutes, setNewMinutes] = useState(25);
+  const [subtaskPopover, setSubtaskPopover] = useState<{
+    parentId: string;
+    anchor: DOMRect;
+  } | null>(null);
   const canAdd = newTitle.trim().length > 0;
-  const [openSubtaskFor, setOpenSubtaskFor] = useState<string | null>(null);
-  const [subTitle, setSubTitle] = useState("");
-  const [subMinutes, setSubMinutes] = useState(10);
-  const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    // Default to collapsed on small screens to avoid huge scrolling stacks.
-    // User can expand per-parent.
-    if (typeof window === "undefined") return;
-    const small = window.matchMedia?.("(max-width: 639px)")?.matches ?? false;
-    if (!small) return;
-    setCollapsedParents((prev) => {
-      if (Object.keys(prev).length) return prev;
-      const next: Record<string, boolean> = {};
-      for (const t of props.tasks) {
-        if (t.parentId !== null) continue;
-        const hasKids = props.tasks.some((k) => k.parentId === t.id);
-        if (hasKids) next[t.id] = true;
-      }
-      return next;
-    });
-  }, [props.tasks]);
+  const pxPerMin = useGridPxPerMin();
 
   function submitAdd() {
     const title = newTitle.trim();
@@ -89,6 +82,22 @@ export function PlanView(props: {
     for (const id of Object.keys(minutesOverrideById)) out[id] = true;
     return out;
   }, [minutesOverrideById]);
+  const childCountById = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [pid, kids] of subtasksByParent) out[pid] = kids.length;
+    return out;
+  }, [subtasksByParent]);
+  const popoverParent = useMemo(
+    () =>
+      subtaskPopover
+        ? props.tasks.find((t) => t.id === subtaskPopover.parentId) ?? null
+        : null,
+    [subtaskPopover, props.tasks],
+  );
+  const popoverKids = useMemo(
+    () => (subtaskPopover ? subtasksByParent.get(subtaskPopover.parentId) ?? [] : []),
+    [subtaskPopover, subtasksByParent],
+  );
   const later = useMemo(
     () => props.tasks.filter((t) => t.status === "queued" && !t.inSprint),
     [props.tasks],
@@ -101,8 +110,54 @@ export function PlanView(props: {
     settings: props.settings,
   });
 
+  const doneCount = useMemo(
+    () => props.tasks.filter((t) => t.status === "done").length,
+    [props.tasks],
+  );
+  const exportableCount = useMemo(
+    () =>
+      props.tasks.filter(
+        (t) => t.status !== "done" && t.kind === "task",
+      ).length,
+    [props.tasks],
+  );
+
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={props.onOpenExport}
+          disabled={exportableCount === 0}
+          className={[
+            "rounded-lg border border-line px-3 py-1.5 text-xs transition-colors",
+            exportableCount === 0
+              ? "bg-white/40 text-muted cursor-not-allowed"
+              : "bg-white/70 text-ink hover:bg-soft",
+          ].join(" ")}
+        >
+          Export tasks
+        </button>
+        <button
+          type="button"
+          onClick={props.onStartFreshDay}
+          disabled={doneCount === 0}
+          className={[
+            "rounded-lg border border-line px-3 py-1.5 text-xs transition-colors",
+            doneCount === 0
+              ? "bg-white/40 text-muted cursor-not-allowed"
+              : "bg-white/70 text-ink hover:bg-soft",
+          ].join(" ")}
+          title={
+            doneCount === 0
+              ? "No completed tasks to clear"
+              : `Clear ${doneCount} completed task${doneCount === 1 ? "" : "s"}`
+          }
+        >
+          Start fresh day
+        </button>
+      </div>
+
       <div
         className={[
           "rounded-xl border px-5 py-4 shadow-soft",
@@ -147,9 +202,11 @@ export function PlanView(props: {
               type="number"
               min={1}
               value={newMinutes}
+              onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => {
                 const val = e.target.valueAsNumber;
-                setNewMinutes(isNaN(val) ? 1 : Math.max(1, Math.round(val)));
+                if (isNaN(val)) return;
+                setNewMinutes(Math.max(1, Math.round(val)));
               }}
               aria-label="Task duration in minutes"
               className="w-[96px] sm:w-[120px] rounded-xl border border-line bg-white/70 px-3 py-3 text-[15px] outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
@@ -216,111 +273,24 @@ export function PlanView(props: {
         </div>
 
         {queuedSprint.length ? (
-          <TaskList
+          <TaskCanvas
             tasks={queuedSprint}
-            onReorder={props.onReorderSprint}
+            schedule={props.schedule}
+            pxPerMinute={pxPerMin}
+            now={props.now}
+            onSetTaskTime={props.onSetTaskTime}
+            onCreateTaskAtTime={props.onAddTaskAtTime}
+            onOpenSubtasks={(parentId, anchor) => setSubtaskPopover({ parentId, anchor })}
             onEditTitle={props.onEditTitle}
             onEditMinutes={props.onEditMinutes}
+            onEditNotes={props.onEditNotes}
             onToggleDone={props.onToggleDone}
             onDelete={props.onDelete}
             onToggleInSprint={props.onToggleInSprint}
             onDuplicate={props.onDuplicate}
-            onRequestAddSubtask={(parentId) => {
-              setOpenSubtaskFor(parentId);
-              setSubTitle("");
-              setSubMinutes(10);
-            }}
+            childCountById={childCountById}
             minutesOverrideById={minutesOverrideById}
             minutesReadOnlyById={minutesReadOnlyById}
-            renderAfterRow={(parent) => {
-              if (parent.kind !== "task") return null;
-              const kids = subtasksByParent.get(parent.id) ?? [];
-              const isOpen = openSubtaskFor === parent.id;
-              const isCollapsed = Boolean(collapsedParents[parent.id]);
-              return (
-                <div className="mt-2 ml-3 sm:ml-6 space-y-2 min-w-0 max-w-full overflow-x-hidden">
-                  {kids.length ? (
-                    <div className="space-y-2 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs text-muted">
-                          {kids.length} subtask{kids.length === 1 ? "" : "s"}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCollapsedParents((prev) => ({ ...prev, [parent.id]: !Boolean(prev[parent.id]) }))
-                          }
-                          className="rounded-lg border border-line bg-white/60 px-2 py-1.5 text-xs text-ink hover:bg-soft transition-colors"
-                        >
-                          {isCollapsed ? "Show" : "Hide"}
-                        </button>
-                      </div>
-
-                      {!isCollapsed ? (
-                        <SubtaskList
-                          tasks={kids}
-                          onReorder={(orderedIds) => props.onReorderSubtasks(parent.id, orderedIds)}
-                          onEditTitle={props.onEditTitle}
-                          onEditMinutes={props.onEditMinutes}
-                          onToggleDone={props.onToggleDone}
-                          onDelete={props.onDelete}
-                          onDuplicate={props.onDuplicate}
-                        />
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {isOpen ? (
-                    <div className="rounded-xl border border-line bg-white/60 p-4 shadow-soft">
-                      <div className="text-xs text-muted">Add subtask</div>
-                      <div className="mt-2 flex flex-col sm:flex-row gap-2 min-w-0">
-                        <input
-                          value={subTitle}
-                          onChange={(e) => setSubTitle(e.target.value)}
-                          placeholder="Subtask"
-                          className="flex-1 rounded-xl border border-line bg-white/80 px-3 py-2 text-sm outline-none"
-                        />
-                        <div className="flex items-center justify-center sm:justify-end gap-2">
-                          <input
-                            type="number"
-                            min={1}
-                            value={subMinutes}
-                            onChange={(e) =>
-                              setSubMinutes(Math.max(1, Math.round(e.target.valueAsNumber || 1)))
-                            }
-                            className="w-full sm:w-[110px] rounded-xl border border-line bg-white/80 px-3 py-2 text-sm outline-none"
-                          />
-                          <span className="text-sm text-muted">min</span>
-                        </div>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const title = subTitle.trim();
-                            if (!title) return;
-                            props.onAddSubtask(parent.id, title, subMinutes);
-                            setSubTitle("");
-                            setSubMinutes(10);
-                            setOpenSubtaskFor(null);
-                          }}
-                          className="rounded-lg border border-line bg-ink px-3 py-2 text-sm text-paper hover:bg-black transition-colors"
-                        >
-                          Add subtask
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setOpenSubtaskFor(null)}
-                          className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:bg-soft transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            }}
           />
         ) : (
           <div className="rounded-xl border border-line bg-white/50 px-5 py-6 text-sm text-muted">
@@ -342,6 +312,7 @@ export function PlanView(props: {
                 task={t}
                 onEditTitle={props.onEditTitle}
                 onEditMinutes={props.onEditMinutes}
+                onEditNotes={props.onEditNotes}
                 onToggleDone={props.onToggleDone}
                 onDelete={props.onDelete}
                 onToggleInSprint={props.onToggleInSprint}
@@ -362,6 +333,7 @@ export function PlanView(props: {
                 task={t}
                 onEditTitle={props.onEditTitle}
                 onEditMinutes={props.onEditMinutes}
+                onEditNotes={props.onEditNotes}
                 onToggleDone={props.onToggleDone}
                 onDelete={props.onDelete}
                 onToggleInSprint={props.onToggleInSprint}
@@ -370,6 +342,21 @@ export function PlanView(props: {
             ))}
           </div>
         </div>
+      ) : null}
+
+      {subtaskPopover && popoverParent ? (
+        <SubtasksPopover
+          parent={popoverParent}
+          kids={popoverKids}
+          anchor={subtaskPopover.anchor}
+          onClose={() => setSubtaskPopover(null)}
+          onAddSubtask={props.onAddSubtask}
+          onEditTitle={props.onEditTitle}
+          onEditMinutes={props.onEditMinutes}
+          onEditNotes={props.onEditNotes}
+          onToggleDone={props.onToggleDone}
+          onDelete={props.onDelete}
+        />
       ) : null}
     </div>
   );

@@ -3,8 +3,12 @@
 import type { Settings, Task } from "@/src/lib/types";
 import {
   formatMinutesOfDay,
+  getTaskTotalMinutes,
+  getTodayAtMinutes,
   isProjectedPastCutoff,
+  minutesToMs,
   type SprintSchedule,
+  type SprintScheduleRow,
 } from "@/src/lib/time";
 import { useGridPxPerMin } from "@/src/lib/layout";
 import { useMemo, useState } from "react";
@@ -55,6 +59,16 @@ export function PlanView(props: {
     () => props.tasks.filter((t) => t.status === "queued" && t.inSprint && t.parentId === null),
     [props.tasks],
   );
+  const sprintAll = useMemo(
+    () =>
+      props.tasks.filter(
+        (t) =>
+          t.inSprint &&
+          t.parentId === null &&
+          (t.status === "queued" || t.status === "done"),
+      ),
+    [props.tasks],
+  );
   const subtasksByParent = useMemo(() => {
     const map = new Map<string, Task[]>();
     for (const t of props.tasks) {
@@ -102,7 +116,34 @@ export function PlanView(props: {
     () => props.tasks.filter((t) => t.status === "queued" && !t.inSprint),
     [props.tasks],
   );
-  const done = useMemo(() => props.tasks.filter((t) => t.status === "done"), [props.tasks]);
+  // Done section below the canvas now shows only out-of-sprint completions —
+  // sprint-done tasks live on the timeline (muted + line-through) and would be
+  // duplicated otherwise.
+  const done = useMemo(
+    () => props.tasks.filter((t) => t.status === "done" && !t.inSprint),
+    [props.tasks],
+  );
+
+  // Synthesize schedule rows for done sprint tasks (computeSprintSchedule
+  // deliberately excludes them since they don't affect projected finish).
+  // Without these rows, TaskCanvas skips rendering them.
+  const canvasSchedule = useMemo<SprintSchedule>(() => {
+    const extra: SprintScheduleRow[] = [];
+    for (const t of sprintAll) {
+      if (t.status !== "done") continue;
+      if (t.scheduledStartMinutes == null) continue;
+      const minutes = getTaskTotalMinutes(t);
+      const startMs = getTodayAtMinutes(props.now, t.scheduledStartMinutes).getTime();
+      extra.push({
+        taskId: t.id,
+        startMs,
+        endMs: startMs + minutesToMs(minutes),
+        minutes,
+      });
+    }
+    if (extra.length === 0) return props.schedule;
+    return { ...props.schedule, rows: [...props.schedule.rows, ...extra] };
+  }, [props.schedule, sprintAll, props.now]);
 
   const pastCutoff = isProjectedPastCutoff({
     now: props.now,
@@ -123,68 +164,68 @@ export function PlanView(props: {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={props.onOpenExport}
-          disabled={exportableCount === 0}
-          className={[
-            "rounded-lg border border-line px-3 py-1.5 text-xs transition-colors",
-            exportableCount === 0
-              ? "bg-white/40 text-muted cursor-not-allowed"
-              : "bg-white/70 text-ink hover:bg-soft",
-          ].join(" ")}
-        >
-          Export tasks
-        </button>
-        <button
-          type="button"
-          onClick={props.onStartFreshDay}
-          disabled={doneCount === 0}
-          className={[
-            "rounded-lg border border-line px-3 py-1.5 text-xs transition-colors",
-            doneCount === 0
-              ? "bg-white/40 text-muted cursor-not-allowed"
-              : "bg-white/70 text-ink hover:bg-soft",
-          ].join(" ")}
-          title={
-            doneCount === 0
-              ? "No completed tasks to clear"
-              : `Clear ${doneCount} completed task${doneCount === 1 ? "" : "s"}`
-          }
-        >
-          Start fresh day
-        </button>
-      </div>
-
-      <div
-        className={[
-          "rounded-xl border px-5 py-4 shadow-soft",
-          pastCutoff ? "border-rose-200 bg-rose-50" : "border-teal-200 bg-teal-50",
-        ].join(" ")}
-      >
-        <div className={["text-sm", pastCutoff ? "text-rose-900" : "text-teal-900"].join(" ")}>
-          {pastCutoff
-            ? `This plan runs past ${formatMinutesOfDay(props.settings.latestFinishMinutes)}.`
-            : `This plan finishes before ${formatMinutesOfDay(props.settings.latestFinishMinutes)}.`}
+    <div className="space-y-6 md:space-y-0 md:grid md:grid-cols-[320px_1fr] md:gap-6">
+      <aside className="space-y-4 md:sticky md:top-4 md:self-start">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={props.onOpenExport}
+            disabled={exportableCount === 0}
+            className={[
+              "rounded-lg border border-line px-3 py-1.5 text-xs transition-colors",
+              exportableCount === 0
+                ? "bg-white/40 text-muted cursor-not-allowed"
+                : "bg-white/70 text-ink hover:bg-soft",
+            ].join(" ")}
+          >
+            Export tasks
+          </button>
+          <button
+            type="button"
+            onClick={props.onStartFreshDay}
+            disabled={doneCount === 0}
+            className={[
+              "rounded-lg border border-line px-3 py-1.5 text-xs transition-colors",
+              doneCount === 0
+                ? "bg-white/40 text-muted cursor-not-allowed"
+                : "bg-white/70 text-ink hover:bg-soft",
+            ].join(" ")}
+            title={
+              doneCount === 0
+                ? "No completed tasks to clear"
+                : `Clear ${doneCount} completed task${doneCount === 1 ? "" : "s"}`
+            }
+          >
+            Start fresh day
+          </button>
         </div>
-        {pastCutoff ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={props.onStartSprint}
-              className="rounded-lg border border-teal-700 bg-teal-600 px-4 py-2 text-sm text-white hover:bg-teal-700 transition-colors"
-            >
-              Start anyway
-            </button>
-          </div>
-        ) : null}
-      </div>
 
-      <div className="rounded-xl border border-line bg-white/70 p-5 shadow-soft">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div className="min-w-0 flex-1 text-center md:text-left">
+        <div
+          className={[
+            "rounded-xl border px-4 py-3 shadow-soft",
+            pastCutoff ? "border-rose-200 bg-rose-50" : "border-teal-200 bg-teal-50",
+          ].join(" ")}
+        >
+          <div className={["text-sm", pastCutoff ? "text-rose-900" : "text-teal-900"].join(" ")}>
+            {pastCutoff
+              ? `Runs past ${formatMinutesOfDay(props.settings.latestFinishMinutes)}.`
+              : `Finishes before ${formatMinutesOfDay(props.settings.latestFinishMinutes)}.`}
+          </div>
+          {pastCutoff ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={props.onStartSprint}
+                className="rounded-lg border border-teal-700 bg-teal-600 px-3 py-1.5 text-sm text-white hover:bg-teal-700 transition-colors"
+              >
+                Start anyway
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-xl border border-line bg-white/70 p-4 shadow-soft space-y-3">
+          <div>
             <div className="text-sm text-muted">Add a task</div>
             <input
               value={newTitle}
@@ -194,10 +235,10 @@ export function PlanView(props: {
               }}
               placeholder="What's the next tiny step?"
               aria-label="Task title"
-              className="mt-2 w-full rounded-xl border border-line bg-white/70 px-4 py-3 text-[15px] outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
+              className="mt-2 w-full rounded-xl border border-line bg-white/70 px-3 py-2.5 text-[15px] outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
             />
           </div>
-          <div className="flex items-center justify-center md:justify-end gap-2">
+          <div className="flex items-center gap-2">
             <input
               type="number"
               min={1}
@@ -209,21 +250,15 @@ export function PlanView(props: {
                 setNewMinutes(Math.max(1, Math.round(val)));
               }}
               aria-label="Task duration in minutes"
-              className="w-[96px] sm:w-[120px] rounded-xl border border-line bg-white/70 px-3 py-3 text-[15px] outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
+              className="w-[88px] rounded-xl border border-line bg-white/70 px-3 py-2.5 text-[15px] outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
             />
-            <span className="pb-3 text-sm text-muted">min</span>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
+            <span className="text-sm text-muted">min</span>
             <button
               type="button"
-              onClick={() => {
-                submitAdd();
-              }}
+              onClick={submitAdd}
               disabled={!canAdd}
               className={[
-                "rounded-lg px-4 py-2 text-sm transition-colors",
+                "ml-auto rounded-lg px-4 py-2 text-sm transition-colors",
                 canAdd
                   ? "border border-line bg-ink text-paper hover:bg-black"
                   : "border border-line bg-white/40 text-muted cursor-not-allowed",
@@ -231,22 +266,22 @@ export function PlanView(props: {
             >
               Add
             </button>
+          </div>
 
-            <div className="mx-1 hidden md:block h-6 w-px bg-line" />
-
+          <div className="flex flex-wrap gap-2 pt-1">
             <button
               type="button"
               onClick={() => props.onInsertBreak(5)}
-              className="rounded-lg border border-line bg-white/60 px-4 py-2 text-sm text-muted hover:bg-soft hover:text-ink transition-colors"
+              className="rounded-lg border border-line bg-white/60 px-3 py-1.5 text-xs text-muted hover:bg-soft hover:text-ink transition-colors"
             >
-              Insert break +5
+              Break +5
             </button>
             <button
               type="button"
               onClick={() => props.onInsertBreak(10)}
-              className="rounded-lg border border-line bg-white/60 px-4 py-2 text-sm text-muted hover:bg-soft hover:text-ink transition-colors"
+              className="rounded-lg border border-line bg-white/60 px-3 py-1.5 text-xs text-muted hover:bg-soft hover:text-ink transition-colors"
             >
-              Insert break +10
+              Break +10
             </button>
           </div>
 
@@ -255,7 +290,7 @@ export function PlanView(props: {
             onClick={props.onStartSprint}
             disabled={queuedSprint.length === 0}
             className={[
-              "w-full md:w-auto rounded-lg px-4 py-2 text-sm transition-colors",
+              "w-full rounded-lg px-4 py-2 text-sm transition-colors",
               queuedSprint.length === 0
                 ? "border border-line bg-white/40 text-muted cursor-not-allowed"
                 : "border border-teal-700 bg-teal-600 text-white hover:bg-teal-700",
@@ -264,39 +299,34 @@ export function PlanView(props: {
             Start sprint
           </button>
         </div>
-      </div>
+      </aside>
 
-      <div className="space-y-3">
+      <section className="space-y-6 min-w-0">
+        <div className="space-y-3">
         <div className="flex items-baseline justify-between">
           <div className="text-sm text-muted">Sprint</div>
           <div className="text-sm text-muted">{queuedSprint.length} items</div>
         </div>
 
-        {queuedSprint.length ? (
-          <TaskCanvas
-            tasks={queuedSprint}
-            schedule={props.schedule}
-            pxPerMinute={pxPerMin}
-            now={props.now}
-            onSetTaskTime={props.onSetTaskTime}
-            onCreateTaskAtTime={props.onAddTaskAtTime}
-            onOpenSubtasks={(parentId, anchor) => setSubtaskPopover({ parentId, anchor })}
-            onEditTitle={props.onEditTitle}
-            onEditMinutes={props.onEditMinutes}
-            onEditNotes={props.onEditNotes}
-            onToggleDone={props.onToggleDone}
-            onDelete={props.onDelete}
-            onToggleInSprint={props.onToggleInSprint}
-            onDuplicate={props.onDuplicate}
-            childCountById={childCountById}
-            minutesOverrideById={minutesOverrideById}
-            minutesReadOnlyById={minutesReadOnlyById}
-          />
-        ) : (
-          <div className="rounded-xl border border-line bg-white/50 px-5 py-6 text-sm text-muted">
-            Add one small task to begin.
-          </div>
-        )}
+        <TaskCanvas
+          tasks={sprintAll}
+          schedule={canvasSchedule}
+          pxPerMinute={pxPerMin}
+          now={props.now}
+          onSetTaskTime={props.onSetTaskTime}
+          onCreateTaskAtTime={props.onAddTaskAtTime}
+          onOpenSubtasks={(parentId, anchor) => setSubtaskPopover({ parentId, anchor })}
+          onEditTitle={props.onEditTitle}
+          onEditMinutes={props.onEditMinutes}
+          onEditNotes={props.onEditNotes}
+          onToggleDone={props.onToggleDone}
+          onDelete={props.onDelete}
+          onToggleInSprint={props.onToggleInSprint}
+          onDuplicate={props.onDuplicate}
+          childCountById={childCountById}
+          minutesOverrideById={minutesOverrideById}
+          minutesReadOnlyById={minutesReadOnlyById}
+        />
       </div>
 
       {later.length ? (
@@ -343,6 +373,7 @@ export function PlanView(props: {
           </div>
         </div>
       ) : null}
+      </section>
 
       {subtaskPopover && popoverParent ? (
         <SubtasksPopover

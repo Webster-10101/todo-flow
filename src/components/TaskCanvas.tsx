@@ -238,12 +238,12 @@ function TaskBlock(props: {
             onPointerDown={swallow}
             disabled={props.hasChildren}
             className={[
-              "h-[14px] w-[14px] shrink-0 rounded-full border flex items-center justify-center transition-colors",
+              "h-[18px] w-[18px] shrink-0 rounded-full border flex items-center justify-center transition-colors",
               props.hasChildren
                 ? "border-line/70 bg-white/60 cursor-not-allowed text-muted"
                 : muted
-                  ? "border-ink/60 bg-ink/80 text-white"
-                  : "border-line/80 bg-white/80 hover:border-ink/40",
+                  ? "border-ink/60 bg-ink/80 text-white cursor-pointer"
+                  : "border-line/80 bg-white/80 hover:border-ink/40 cursor-pointer",
             ].join(" ")}
             aria-label={
               props.hasChildren

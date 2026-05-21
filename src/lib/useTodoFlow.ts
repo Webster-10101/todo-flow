@@ -109,7 +109,7 @@ export function useTodoFlow() {
           type: "ADD_TASK",
           payload: { id: uid(), title, minutes, nowMs: Date.now() },
         }),
-      addTaskAtTime: (scheduledStartMinutes: number, minutes = 30) =>
+      addTaskAtTime: (scheduledStartMinutes: number, minutes = 50) =>
         dispatch({
           type: "ADD_TASK",
           payload: {

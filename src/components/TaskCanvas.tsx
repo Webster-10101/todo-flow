@@ -400,7 +400,6 @@ export function TaskCanvas(props: {
     let earliest = Number.POSITIVE_INFINITY;
     for (const t of props.tasks) {
       if (t.parentId !== null) continue;
-      if (t.status === "done") continue;
       if (t.scheduledStartMinutes == null) continue;
       earliest = Math.min(earliest, t.scheduledStartMinutes);
     }

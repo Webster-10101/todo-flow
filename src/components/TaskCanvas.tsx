@@ -131,6 +131,31 @@ function TaskBlock(props: {
   const [resizeDelta, setResizeDelta] = useState(0);
   const resizeRef = useRef({ startY: 0, startMin: 0, captured: false });
 
+  // Local draft for the minutes input. Without this, every keystroke dispatches
+  // to the reducer — typing "30" shrinks the block to 3 min mid-type and the
+  // meta row collapses before the "0" lands. Commit on Enter or blur instead.
+  const displayMinutes = props.minutesOverride ?? props.minutes;
+  const [minutesDraft, setMinutesDraft] = useState<string>(String(displayMinutes));
+  const minutesFocusedRef = useRef(false);
+  useEffect(() => {
+    if (minutesFocusedRef.current) return;
+    setMinutesDraft(String(displayMinutes));
+  }, [displayMinutes]);
+  const commitMinutesDraft = () => {
+    if (props.minutesReadOnly) return;
+    const parsed = parseInt(minutesDraft, 10);
+    if (isNaN(parsed)) {
+      setMinutesDraft(String(displayMinutes));
+      return;
+    }
+    const clamped = Math.max(1, parsed);
+    if (clamped !== displayMinutes) {
+      props.onEditMinutes(props.task.id, clamped);
+    } else {
+      setMinutesDraft(String(displayMinutes));
+    }
+  };
+
   const startMin = props.task.scheduledStartMinutes ?? props.canvasStartMin;
   const topPx = (startMin - props.canvasStartMin) * props.pxPerMinute;
   const baseHeightPx = Math.max(MIN_BLOCK_HEIGHT_PX, props.minutes * props.pxPerMinute);
@@ -147,7 +172,6 @@ function TaskBlock(props: {
   const showMetaRow = heightPx >= 36;
   const showTitleRow = heightPx >= 22;
   const showResizeHandle = !props.minutesReadOnly && heightPx >= 24;
-  const displayMinutes = props.minutesOverride ?? props.minutes;
 
   // Stop pointer events on inputs/buttons so they don't activate drag.
   const swallow = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation();
@@ -328,16 +352,27 @@ function TaskBlock(props: {
             <input
               type="number"
               min={1}
-              value={displayMinutes}
-              onFocus={(e) => e.currentTarget.select()}
+              value={minutesDraft}
+              onFocus={(e) => {
+                minutesFocusedRef.current = true;
+                e.currentTarget.select();
+              }}
               onChange={(e) => {
                 if (props.minutesReadOnly) return;
-                const v = e.target.valueAsNumber;
-                if (isNaN(v)) return;
-                props.onEditMinutes(
-                  props.task.id,
-                  Math.max(1, Math.round(v)),
-                );
+                setMinutesDraft(e.target.value);
+              }}
+              onBlur={() => {
+                minutesFocusedRef.current = false;
+                commitMinutesDraft();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  setMinutesDraft(String(displayMinutes));
+                  e.currentTarget.blur();
+                }
               }}
               onPointerDown={swallow}
               disabled={props.minutesReadOnly}

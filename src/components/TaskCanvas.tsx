@@ -3,6 +3,7 @@
 import type { Task } from "@/src/lib/types";
 import type { SprintSchedule } from "@/src/lib/time";
 import { formatClock } from "@/src/lib/time";
+import { googleCalendarUrl } from "@/src/lib/calendar";
 import {
   DndContext,
   PointerSensor,
@@ -64,6 +65,15 @@ function CheckIcon() {
   return (
     <svg {...iconProps} strokeWidth={2}>
       <path d="M3 8.5L6.5 12 13 4.5" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" />
+      <path d="M2.5 6.5h11M5.5 2.5v2M10.5 2.5v2" />
     </svg>
   );
 }
@@ -322,6 +332,25 @@ function TaskBlock(props: {
                 </span>
               ) : null}
             </button>
+          ) : null}
+          {!isBreak ? (
+            <a
+              href={googleCalendarUrl({
+                title: props.task.title,
+                notes: props.task.notes,
+                startMs: props.endsAtMs - props.minutes * 60_000,
+                endMs: props.endsAtMs,
+              })}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={swallow}
+              onPointerDown={swallow}
+              className={iconBtnClass}
+              aria-label="Add to Google Calendar"
+              title="Add to Google Calendar"
+            >
+              <CalendarIcon />
+            </a>
           ) : null}
           {props.onDuplicate && !isBreak ? (
             <button

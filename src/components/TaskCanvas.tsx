@@ -113,6 +113,17 @@ function snapToCanvas(min: number) {
   );
 }
 
+// The slot the pointer is INSIDE (floor, not round). Used for create + the
+// hover ghost so the preview always contains the cursor — round-to-nearest
+// can snap upward, leaving the ghost hanging above the pointer.
+function slotContaining(min: number) {
+  const floored = Math.floor(min / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN;
+  return Math.max(
+    CANVAS_START_MIN,
+    Math.min(CANVAS_END_MIN - SCHEDULE_SLOT_MIN, floored),
+  );
+}
+
 // Given a desired start and a duration, return the closest 15-min slot that
 // doesn't overlap any of `others`. Searches outward from `desired` in slot
 // increments, alternating below/above. Returns null if no slot found within
@@ -693,7 +704,7 @@ export function TaskCanvas(props: {
             const rect = e.currentTarget.getBoundingClientRect();
             const yOffset = e.clientY - rect.top;
             const clickedMin = effectiveStartMin + yOffset / props.pxPerMinute;
-            const snapped = snapToCanvas(clickedMin);
+            const snapped = slotContaining(clickedMin);
             props.onSelect?.(null);
             if (coarsePointer) {
               // Two-tap create on touch: first tap places/moves the ghost,
@@ -717,7 +728,7 @@ export function TaskCanvas(props: {
             const rect = e.currentTarget.getBoundingClientRect();
             const hoveredMin =
               effectiveStartMin + (e.clientY - rect.top) / props.pxPerMinute;
-            setHoverStart(snapToCanvas(hoveredMin));
+            setHoverStart(slotContaining(hoveredMin));
           }}
           onMouseLeave={() => setHoverStart(null)}
         >

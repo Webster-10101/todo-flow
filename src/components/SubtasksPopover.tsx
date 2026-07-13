@@ -32,6 +32,21 @@ export function SubtasksPopover(props: {
     setPos(placeBelow(props.anchor));
   }, [props.anchor]);
 
+  // Re-place when the visual viewport changes — on iOS the keyboard shrinks
+  // visualViewport (not window.innerHeight), which would otherwise leave the
+  // popover hidden behind the keyboard.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onChange = () => setPos(placeBelow(props.anchor));
+    vv.addEventListener("resize", onChange);
+    vv.addEventListener("scroll", onChange);
+    return () => {
+      vv.removeEventListener("resize", onChange);
+      vv.removeEventListener("scroll", onChange);
+    };
+  }, [props.anchor]);
+
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
       if (!ref.current) return;
@@ -66,7 +81,7 @@ export function SubtasksPopover(props: {
         <button
           type="button"
           onClick={props.onClose}
-          className="px-1 text-[14px] leading-none text-muted hover:text-ink transition-colors"
+          className="relative -m-1.5 inline-flex h-8 w-8 items-center justify-center text-[16px] leading-none text-muted hover:text-ink transition-colors"
           aria-label="Close subtasks"
           title="Close"
         >
@@ -108,8 +123,14 @@ export function SubtasksPopover(props: {
 
 function placeBelow(anchor: DOMRect): { top: number; left: number } {
   if (typeof window === "undefined") return { top: 0, left: 0 };
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  // Use the visual viewport when available — on iOS the keyboard shrinks it
+  // while window.innerHeight stays fixed.
+  const vv = window.visualViewport;
+  const vw = vv?.width ?? window.innerWidth;
+  // Bottom edge of the visible area in layout-viewport coordinates (what
+  // getBoundingClientRect and position:fixed are relative to).
+  const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const visibleTop = vv ? vv.offsetTop : 0;
   let left = anchor.left;
   if (left + POPOVER_WIDTH + VIEWPORT_PADDING > vw) {
     left = vw - POPOVER_WIDTH - VIEWPORT_PADDING;
@@ -118,8 +139,13 @@ function placeBelow(anchor: DOMRect): { top: number; left: number } {
   let top = anchor.bottom + 6;
   // If not enough space below, flip above the anchor.
   const approxHeight = 240;
-  if (top + approxHeight > vh && anchor.top - approxHeight - 6 > VIEWPORT_PADDING) {
+  if (
+    top + approxHeight > visibleBottom &&
+    anchor.top - approxHeight - 6 > visibleTop + VIEWPORT_PADDING
+  ) {
     top = anchor.top - approxHeight - 6;
   }
+  // Last resort: clamp into the visible area (keyboard open, anchor low).
+  top = Math.max(visibleTop + VIEWPORT_PADDING, Math.min(top, visibleBottom - approxHeight));
   return { top, left };
 }

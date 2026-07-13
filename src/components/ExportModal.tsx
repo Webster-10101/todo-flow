@@ -91,7 +91,7 @@ export function ExportModal(props: { open: boolean; tasks: Task[]; onClose: () =
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative w-full max-w-[560px] rounded-2xl border border-line bg-white p-6 shadow-soft">
+      <div className="relative w-full max-w-[560px] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-line bg-white p-6 shadow-soft">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-sm text-muted">Export unfinished tasks</div>

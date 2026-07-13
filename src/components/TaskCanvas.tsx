@@ -2,7 +2,7 @@
 
 import type { Task } from "@/src/lib/types";
 import type { SprintSchedule } from "@/src/lib/time";
-import { formatClock } from "@/src/lib/time";
+import { formatClock, formatMinutesOfDay } from "@/src/lib/time";
 import { googleCalendarUrl } from "@/src/lib/calendar";
 import {
   DndContext,
@@ -78,8 +78,28 @@ function CalendarIcon() {
   );
 }
 
+// after:-inset-2 expands the tap target to ~36px without changing the visual
+// size — the icons sit too close together for the full 44px without overlap.
 const iconBtnClass =
-  "shrink-0 inline-flex h-5 w-5 items-center justify-center rounded text-muted hover:text-ink hover:bg-ink/5 transition-colors";
+  "relative shrink-0 inline-flex h-5 w-5 items-center justify-center rounded text-muted hover:text-ink hover:bg-ink/5 transition-colors after:absolute after:-inset-2 after:content-['']";
+
+// Matches the default minutes in useTodoFlow.addTaskAtTime — keep in sync.
+const GRID_CREATE_MINUTES = 50;
+
+// Touch devices get a two-tap create (ghost block + confirm) instead of
+// instant create-on-tap, so scroll/mis-taps don't spawn empty tasks.
+function useCoarsePointer() {
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(pointer: coarse)");
+    const apply = () => setCoarse(mq.matches);
+    apply();
+    mq.addEventListener?.("change", apply);
+    return () => mq.removeEventListener?.("change", apply);
+  }, []);
+  return coarse;
+}
 
 function snapToCanvas(min: number) {
   const snapped = Math.round(min / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN;
@@ -249,7 +269,10 @@ function TaskBlock(props: {
         ].join(" ")}
         style={{
           cursor: isDragging ? "grabbing" : "grab",
-          touchAction: "none",
+          // "manipulation" keeps page scroll working from a touch that starts
+          // on a block; the TouchSensor's 200ms long-press still claims the
+          // gesture (and preventDefaults) once a drag activates.
+          touchAction: "manipulation",
           background: palette ? palette.bg : undefined,
         }}
         aria-label={`${props.task.title || "Untitled task"} — drag to reschedule`}
@@ -272,7 +295,7 @@ function TaskBlock(props: {
             onPointerDown={swallow}
             disabled={props.hasChildren}
             className={[
-              "h-[18px] w-[18px] shrink-0 rounded-full border flex items-center justify-center transition-colors",
+              "relative h-[18px] w-[18px] shrink-0 rounded-full border flex items-center justify-center transition-colors after:absolute after:-inset-3 after:content-['']",
               props.hasChildren
                 ? "border-line/70 bg-white/60 cursor-not-allowed text-muted"
                 : muted
@@ -420,11 +443,11 @@ function TaskBlock(props: {
             onPointerMove={onResizeMove}
             onPointerUp={onResizeEnd}
             onPointerCancel={onResizeEnd}
-            className="absolute left-3 right-3 bottom-0 h-2.5 cursor-ns-resize group/handle"
+            className="absolute left-3 right-3 bottom-0 h-2.5 cursor-ns-resize group/handle after:absolute after:inset-x-0 after:-top-3 after:bottom-0 after:content-['']"
             style={{ touchAction: "none" }}
             aria-label="Resize task duration"
           >
-            <div className="absolute inset-x-0 bottom-1 mx-auto h-[3px] w-10 rounded-full bg-ink/15 group-hover/handle:bg-ink/45 transition-colors" />
+            <div className="absolute inset-x-0 bottom-1 mx-auto h-[3px] w-10 rounded-full bg-ink/25 md:bg-ink/15 md:group-hover/handle:bg-ink/45 transition-colors" />
           </div>
         ) : null}
       </div>
@@ -455,6 +478,9 @@ export function TaskCanvas(props: {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
   );
+  const coarsePointer = useCoarsePointer();
+  // Pending two-tap create on touch: snapped start minute of the ghost block.
+  const [pendingCreate, setPendingCreate] = useState<number | null>(null);
 
   // Dynamic canvas start: trim the empty hours above "now". Start the visible
   // canvas at hour-floor(now - 60min), but pull earlier if any queued task is
@@ -550,8 +576,11 @@ export function TaskCanvas(props: {
   return (
     <DndContext
       sensors={sensors}
-      autoScroll={false}
+      // Scroll the page when a drag nears the viewport edge so blocks can
+      // reach off-screen times on a tall mobile canvas.
+      autoScroll={{ threshold: { x: 0, y: 0.15 } }}
       modifiers={[snapToSlotModifier]}
+      onDragStart={() => setPendingCreate(null)}
       onDragEnd={(e) => {
         const task = topLevel.find((t) => t.id === String(e.active.id));
         if (!task || task.scheduledStartMinutes == null) return;
@@ -612,9 +641,45 @@ export function TaskCanvas(props: {
             const yOffset = e.clientY - rect.top;
             const clickedMin = effectiveStartMin + yOffset / props.pxPerMinute;
             const snapped = snapToCanvas(clickedMin);
+            if (coarsePointer) {
+              // Two-tap create on touch: first tap places/moves the ghost,
+              // tapping the ghost confirms.
+              setPendingCreate(snapped);
+              return;
+            }
             props.onCreateTaskAtTime(snapped);
           }}
         >
+          {/* Ghost block — pending touch create awaiting confirmation */}
+          {pendingCreate != null ? (
+            <div
+              className="absolute inset-x-1 z-20 rounded-lg border-2 border-dashed border-ink/30 bg-white/70 backdrop-blur-[2px] flex items-center justify-center"
+              style={{
+                top: (pendingCreate - effectiveStartMin) * props.pxPerMinute,
+                height: GRID_CREATE_MINUTES * props.pxPerMinute,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  props.onCreateTaskAtTime(pendingCreate);
+                  setPendingCreate(null);
+                }}
+                className="rounded-full border border-line bg-white px-4 py-2 text-sm text-ink shadow-soft"
+              >
+                Add {GRID_CREATE_MINUTES} min at {formatMinutesOfDay(pendingCreate)}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingCreate(null)}
+                aria-label="Cancel"
+                className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex h-9 w-9 items-center justify-center rounded-full text-muted"
+              >
+                <XIcon />
+              </button>
+            </div>
+          ) : null}
           {/* Now-line indicator */}
           {nowInCanvas ? (
             <div

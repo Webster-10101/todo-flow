@@ -24,6 +24,17 @@ body {
   background: rgba(20, 20, 20, 0.10);
 }
 
+/* iOS Safari zooms the whole page when a focused input's font-size is under
+   16px, and doesn't zoom back out. Force 16px on touch devices only — desktop
+   keeps the designed sizes. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

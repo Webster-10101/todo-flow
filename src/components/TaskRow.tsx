@@ -95,7 +95,7 @@ export function TaskRow(props: {
               : undefined
           }
           className={[
-            "mt-0.5 rounded-full border border-line flex items-center justify-center",
+            "relative mt-0.5 rounded-full border border-line flex items-center justify-center after:absolute after:-inset-2.5 after:content-['']",
             props.compact ? "h-5 w-5" : "h-6 w-6",
             isContainerParent
               ? "bg-soft cursor-not-allowed"

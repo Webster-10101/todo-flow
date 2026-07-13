@@ -70,7 +70,7 @@ export function App() {
   }, [saveError]);
 
   return (
-    <main className="min-h-screen px-4 py-7 sm:px-8 sm:py-10">
+    <main className="min-h-screen px-4 pt-7 sm:px-8 sm:pt-10 pb-[calc(1.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(2.5rem+env(safe-area-inset-bottom))]">
       <div className="mx-auto w-full max-w-[980px]">
         <header className="mb-6 md:mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div className="text-center md:text-left">

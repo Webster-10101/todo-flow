@@ -15,9 +15,10 @@ export function Toast(props: {
     <div
       aria-live="polite"
       aria-atomic="true"
-      style={{ bottom: `${bottomPx}px` }}
+      // Keep toasts above the iOS home indicator in standalone/native mode.
+      style={{ bottom: `calc(${bottomPx}px + env(safe-area-inset-bottom, 0px))` }}
       className={[
-        "pointer-events-none fixed left-6 z-50",
+        "pointer-events-none fixed left-4 sm:left-6 z-50",
         "transition-opacity duration-200",
         props.visible ? "opacity-100" : "opacity-0",
       ].join(" ")}

@@ -513,6 +513,10 @@ export function TaskCanvas(props: {
   const coarsePointer = useCoarsePointer();
   // Pending two-tap create on touch: snapped start minute of the ghost block.
   const [pendingCreate, setPendingCreate] = useState<number | null>(null);
+  // Mouse-hover preview: snapped start minute of the block a click would
+  // create. Fine-pointer only; cleared while dragging or over a block.
+  const [hoverStart, setHoverStart] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Dynamic canvas start: trim the empty hours above "now". Start the visible
   // canvas at hour-floor(now - 60min), but pull earlier if any queued task is
@@ -624,9 +628,13 @@ export function TaskCanvas(props: {
       modifiers={[snapToSlotModifier]}
       onDragStart={(e) => {
         setPendingCreate(null);
+        setHoverStart(null);
+        setIsDragging(true);
         props.onSelect?.(String(e.active.id));
       }}
+      onDragCancel={() => setIsDragging(false)}
       onDragEnd={(e) => {
+        setIsDragging(false);
         const task = topLevel.find((t) => t.id === String(e.active.id));
         if (!task || task.scheduledStartMinutes == null) return;
         const dyMin = e.delta.y / props.pxPerMinute;
@@ -693,9 +701,45 @@ export function TaskCanvas(props: {
               setPendingCreate(snapped);
               return;
             }
+            // Clear the hover ghost now — the new block lands under the
+            // cursor and no further mousemove fires to clear it.
+            setHoverStart(null);
             props.onCreateTaskAtTime(snapped);
           }}
+          onMouseMove={(e) => {
+            if (coarsePointer || isDragging) return;
+            // Only preview over the bare canvas — moving onto a block (or any
+            // other child) clears the ghost.
+            if (e.target !== e.currentTarget) {
+              setHoverStart(null);
+              return;
+            }
+            const rect = e.currentTarget.getBoundingClientRect();
+            const hoveredMin =
+              effectiveStartMin + (e.clientY - rect.top) / props.pxPerMinute;
+            setHoverStart(snapToCanvas(hoveredMin));
+          }}
+          onMouseLeave={() => setHoverStart(null)}
         >
+          {/* Hover ghost — faint preview of the block a click would create.
+              pointer-events-none is load-bearing: the canvas click handler
+              only fires when the click lands on the canvas itself. */}
+          {hoverStart != null && pendingCreate == null && !isDragging ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-1 rounded-lg border-2 border-dashed border-ink/15 bg-ink/[0.03] transition-[top] duration-100 ease-out"
+              style={{
+                top: (hoverStart - effectiveStartMin) * props.pxPerMinute,
+                height:
+                  Math.min(GRID_CREATE_MINUTES, CANVAS_END_MIN - hoverStart) *
+                  props.pxPerMinute,
+              }}
+            >
+              <div className="absolute left-2 top-1 text-[11px] text-muted/70 tabular-nums">
+                {formatMinutesOfDay(hoverStart)} · {GRID_CREATE_MINUTES} min
+              </div>
+            </div>
+          ) : null}
           {/* Ghost block — pending touch create awaiting confirmation */}
           {pendingCreate != null ? (
             <div

@@ -20,6 +20,7 @@ import {
   SCHEDULE_SLOT_MIN,
 } from "@/src/lib/layout";
 import { paletteForId } from "@/src/lib/palette";
+import { haptic } from "@/src/lib/platform";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 // Small inline icons sized for the title row. Stroke-based so they pick up
@@ -261,6 +262,12 @@ function TaskBlock(props: {
         transform: transform ? `translate3d(0, ${transform.y}px, 0)` : undefined,
         zIndex: isDragging ? 30 : props.selected ? 20 : 1,
         opacity: isDragging ? 0.92 : 1,
+        // Settle into place on drop / reflow. Off while dragging or resizing
+        // so the block tracks the finger without lag.
+        transition:
+          isDragging || resizeRef.current.captured
+            ? undefined
+            : "top 140ms cubic-bezier(0.2, 0.9, 0.3, 1.15), height 140ms cubic-bezier(0.2, 0.9, 0.3, 1.15)",
       }}
     >
       <div
@@ -270,7 +277,7 @@ function TaskBlock(props: {
         className={[
           "relative h-full w-full overflow-hidden rounded-lg border shadow-soft flex flex-col",
           isBreak ? "border-emerald-200/80 bg-emerald-50/90" : "border-line/80",
-          muted ? "opacity-55 saturate-50" : "",
+          muted ? "opacity-55 saturate-50 animate-block-settle" : "",
           props.selected ? "ring-2 ring-ink/30" : "",
           "pl-3 pr-2 py-1.5",
         ].join(" ")}
@@ -533,13 +540,23 @@ export function TaskCanvas(props: {
   const slotPx = SCHEDULE_SLOT_MIN * props.pxPerMinute; // 15-min line
 
   // Latch the drag transform to the 15-min grid so blocks visually snap as you
-  // move them, instead of free-floating to pixel positions.
+  // move them, instead of free-floating to pixel positions. Each new slot
+  // fires a light haptic tick (native only) — the drag feels like a ratchet.
+  const lastSnapSlotRef = useRef<number | null>(null);
   const snapToSlotModifier = useMemo<Modifier>(
     () =>
-      ({ transform }) => ({
-        ...transform,
-        y: Math.round(transform.y / slotPx) * slotPx,
-      }),
+      ({ transform, active }) => {
+        const slot = Math.round(transform.y / slotPx);
+        if (active && slot !== lastSnapSlotRef.current) {
+          if (lastSnapSlotRef.current !== null) void haptic("light");
+          lastSnapSlotRef.current = slot;
+        }
+        if (!active) lastSnapSlotRef.current = null;
+        return {
+          ...transform,
+          y: slot * slotPx,
+        };
+      },
     [slotPx],
   );
   const halfHourPx = slotPx * 2; // 30-min line

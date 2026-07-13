@@ -9,7 +9,9 @@ import {
   parseHHMMToMinutes,
 } from "@/src/lib/time";
 import { useTransientFlag } from "@/src/lib/useTransientFlag";
-import { ensureNotificationPermission } from "@/src/lib/platform";
+import { ensureNotificationPermission, haptic } from "@/src/lib/platform";
+import { todayLocalISO } from "@/src/lib/dates";
+import type { Task } from "@/src/lib/types";
 import { isSyncConfigured } from "@/src/lib/supabase";
 import { useSupabaseAuth } from "@/src/lib/useSupabaseAuth";
 import { AuthSheet } from "./AuthSheet";
@@ -66,6 +68,7 @@ export function App() {
     setPraise(randomPraise());
     toast.trigger();
     fireConfetti();
+    void haptic("success");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastCompletion]);
 
@@ -110,6 +113,9 @@ export function App() {
               TodoFlow
             </div>
             <div className="mt-0 md:mt-1 text-2xl md:text-4xl text-ink tracking-tight">Todo Flow</div>
+            <div className="mt-1.5 flex justify-center md:justify-start">
+              <StreakDots tasks={tasks} />
+            </div>
             {/* Mobile status strip: projected finish (tap for day settings) + total */}
             <div className="md:hidden mt-2 flex items-center justify-center gap-2">
               <button
@@ -248,7 +254,7 @@ export function App() {
 
         {runner.mode === "run" ? (
           sprintIsComplete ? (
-            <CompletionView onBackToPlan={actions.exitToPlan} />
+            <CompletionView tasks={tasks} onBackToPlan={actions.exitToPlan} />
           ) : (
             <RunView
               now={now}
@@ -311,6 +317,38 @@ export function App() {
         stackIndex={2}
       />
     </main>
+  );
+}
+
+// Last 7 days, today rightmost — filled when the day has ≥1 completed task.
+// Read-only history, no pressure mechanics.
+function StreakDots({ tasks }: { tasks: Task[] }) {
+  const doneDates = new Set(
+    tasks.filter((t) => t.status === "done").map((t) => t.date),
+  );
+  const days: string[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(todayLocalISO(d));
+  }
+  return (
+    <div
+      className="flex items-center gap-1"
+      title="Days with a completed task (last 7)"
+      aria-label="Days with a completed task, last 7 days"
+    >
+      {days.map((d) => (
+        <span
+          key={d}
+          aria-hidden
+          className={[
+            "h-1.5 w-1.5 rounded-full",
+            doneDates.has(d) ? "bg-teal-500" : "bg-ink/15",
+          ].join(" ")}
+        />
+      ))}
+    </div>
   );
 }
 

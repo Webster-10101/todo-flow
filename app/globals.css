@@ -35,6 +35,23 @@ body {
   }
 }
 
+/* Quick scale-settle when a canvas block flips to done — part of the
+   completion feedback (with confetti + ding + success haptic). */
+@keyframes block-settle {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.965);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.animate-block-settle {
+  animation: block-settle 200ms ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

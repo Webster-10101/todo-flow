@@ -15,6 +15,7 @@ import { useInterval } from "@/src/lib/useInterval";
 import { useTransientFlag } from "@/src/lib/useTransientFlag";
 import {
   cancelTimerNotification,
+  haptic,
   isNative,
   scheduleTimerNotification,
 } from "@/src/lib/platform";
@@ -108,6 +109,7 @@ export function RunView(props: {
     if (isTimeUp && !hasPlayedDing.current) {
       hasPlayedDing.current = true;
       playDing();
+      void haptic("warning");
       if (!isNative()) maybeFireNotification(activeTask?.title ?? "Active task");
     }
     if (!isTimeUp) {

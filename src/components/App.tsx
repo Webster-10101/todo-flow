@@ -10,6 +10,9 @@ import {
 } from "@/src/lib/time";
 import { useTransientFlag } from "@/src/lib/useTransientFlag";
 import { ensureNotificationPermission } from "@/src/lib/platform";
+import { isSyncConfigured } from "@/src/lib/supabase";
+import { useSupabaseAuth } from "@/src/lib/useSupabaseAuth";
+import { AuthSheet } from "./AuthSheet";
 import { PlanView } from "./PlanView";
 import { RunView } from "./RunView";
 import { Toast } from "./Toast";
@@ -38,6 +41,8 @@ export function App() {
   // Mobile-only: the start-at / latest-finish inputs hide behind the
   // projected-finish pill to keep the canvas above the fold.
   const [daySettingsOpen, setDaySettingsOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const { user } = useSupabaseAuth();
 
   function handleStartFreshDay() {
     const doneCount = tasks.filter((t) => t.status === "done").length;
@@ -72,7 +77,25 @@ export function App() {
   return (
     <main className="min-h-screen px-4 pt-7 sm:px-8 sm:pt-10 pb-[calc(1.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(2.5rem+env(safe-area-inset-bottom))]">
       <div className="mx-auto w-full max-w-[980px]">
-        <header className="mb-4 md:mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-3 md:gap-4">
+        <header className="relative mb-4 md:mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-3 md:gap-4">
+          {isSyncConfigured() ? (
+            <button
+              type="button"
+              onClick={() => setAuthOpen(true)}
+              aria-label={user ? "Sync account" : "Sign in to sync"}
+              title={user ? `Syncing as ${user.email}` : "Sign in to sync"}
+              className="absolute right-0 top-0 z-10 inline-flex h-9 items-center gap-1.5 rounded-full border border-line bg-white/70 px-3 text-xs text-muted hover:text-ink hover:bg-soft transition-colors"
+            >
+              <span
+                aria-hidden
+                className={[
+                  "h-2 w-2 rounded-full",
+                  user ? "bg-teal-500" : "bg-ink/20",
+                ].join(" ")}
+              />
+              {user ? "Synced" : "Sync"}
+            </button>
+          ) : null}
           <div className="text-center md:text-left">
             <div className="hidden md:flex text-sm text-muted items-center justify-center md:justify-start">
               <a
@@ -272,6 +295,7 @@ export function App() {
       </div>
 
       <ExportModal open={exportOpen} tasks={tasks} onClose={() => setExportOpen(false)} />
+      <AuthSheet open={authOpen} user={user} onClose={() => setAuthOpen(false)} />
 
       <Toast message={praise ?? "Marked done"} visible={toast.on} stackIndex={0} />
       <Toast

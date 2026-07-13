@@ -1,6 +1,20 @@
-import type { PersistedStateV1, RunnerState, Settings, Task, TaskKind, TaskStatus } from "./types";
+import type {
+  PersistedStateV1,
+  PersistedStateV2,
+  PersistedTaskV1,
+  RunnerState,
+  Settings,
+  Task,
+  TaskKind,
+  TaskStatus,
+} from "./types";
+import { POSITION_GAP } from "./types";
+import { todayLocalISO } from "./dates";
 
-const STORAGE_KEY = "todoflow:v1";
+const STORAGE_KEY_V2 = "todoflow:v2";
+// Legacy blob — read once for migration, then left untouched as a rollback
+// escape hatch for a release or two.
+const STORAGE_KEY_V1 = "todoflow:v1";
 
 function isValidTaskStatus(status: unknown): status is TaskStatus {
   return status === "queued" || status === "active" || status === "done";
@@ -10,7 +24,7 @@ function isValidTaskKind(kind: unknown): kind is TaskKind {
   return kind === "task" || kind === "break";
 }
 
-function isValidTask(obj: unknown): obj is Task {
+function isValidTaskV1(obj: unknown): obj is PersistedTaskV1 {
   if (!obj || typeof obj !== "object") return false;
   const t = obj as Record<string, unknown>;
 
@@ -29,6 +43,36 @@ function isValidTask(obj: unknown): obj is Task {
     typeof t.inSprint === "boolean" &&
     typeof t.createdAt === "number"
   );
+}
+
+function isValidTaskV2(obj: unknown): obj is Task {
+  if (!isValidTaskV1(obj)) return false;
+  const t = obj as unknown as Record<string, unknown>;
+  return (
+    typeof t.date === "string" &&
+    typeof t.position === "number" &&
+    typeof t.updatedAtMs === "number"
+  );
+}
+
+// Backfill for a v1 task (or a v2 row saved by an interim build with missing
+// fields): today's date, array-index position, fresh stamp.
+function migrateTask(t: PersistedTaskV1, index: number, nowMs: number, today: string): Task {
+  const withDefaults = {
+    ...t,
+    parentId: t.parentId ?? null,
+    notes: t.notes ?? "",
+    scheduledStartMinutes: t.scheduledStartMinutes ?? null,
+  };
+  const maybeV2 = t as Partial<Task>;
+  return {
+    ...withDefaults,
+    date: typeof maybeV2.date === "string" ? maybeV2.date : today,
+    position:
+      typeof maybeV2.position === "number" ? maybeV2.position : index * POSITION_GAP,
+    updatedAtMs:
+      typeof maybeV2.updatedAtMs === "number" ? maybeV2.updatedAtMs : nowMs,
+  };
 }
 
 function isValidRunnerState(obj: unknown): obj is RunnerState {
@@ -84,53 +128,69 @@ export function getDefaultTasks(): Task[] {
   return [];
 }
 
-export function loadState(): PersistedStateV1 | null {
+function validateRunnerAndSettings(parsed: {
+  runner?: unknown;
+  settings?: unknown;
+}): { runner: RunnerState; settings: Settings } {
+  const runner =
+    parsed.runner && isValidRunnerState(parsed.runner) ? parsed.runner : getDefaultRunner();
+  const settings: Settings =
+    parsed.settings && isValidSettings(parsed.settings)
+      ? {
+          latestFinishMinutes: (parsed.settings as Settings).latestFinishMinutes,
+          scheduledStartMinutes: (parsed.settings as Settings).scheduledStartMinutes ?? null,
+        }
+      : getDefaultSettings();
+  return { runner, settings };
+}
+
+export function loadState(): PersistedStateV2 | null {
   if (typeof window === "undefined") return null;
+  const nowMs = Date.now();
+  const today = todayLocalISO();
+
+  // Preferred path: v2 blob.
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedStateV1> | null;
+    const rawV2 = window.localStorage.getItem(STORAGE_KEY_V2);
+    if (rawV2) {
+      const parsed = JSON.parse(rawV2) as Partial<PersistedStateV2> | null;
+      if (parsed && parsed.version === 2) {
+        const tasks = Array.isArray(parsed.tasks)
+          ? parsed.tasks
+              .filter(isValidTaskV1)
+              .map((t, i) =>
+                isValidTaskV2(t) ? (t as Task) : migrateTask(t, i, nowMs, today),
+              )
+          : [];
+        return { version: 2, tasks, ...validateRunnerAndSettings(parsed) };
+      }
+    }
+  } catch {
+    // fall through to v1
+  }
+
+  // Migration path: v1 blob → v2 shape. The v1 blob is left in place as a
+  // rollback escape hatch; from now on we only write v2.
+  try {
+    const rawV1 = window.localStorage.getItem(STORAGE_KEY_V1);
+    if (!rawV1) return null;
+    const parsed = JSON.parse(rawV1) as Partial<PersistedStateV1> | null;
     if (!parsed || parsed.version !== 1) return null;
 
-    // Validate and filter tasks (backfill optional fields for older saved state)
-    const validTasks = Array.isArray(parsed.tasks)
-      ? parsed.tasks.filter(isValidTask).map((t) => ({
-          ...t,
-          parentId: t.parentId ?? null,
-          notes: t.notes ?? "",
-          scheduledStartMinutes: t.scheduledStartMinutes ?? null,
-        }))
+    const tasks = Array.isArray(parsed.tasks)
+      ? parsed.tasks.filter(isValidTaskV1).map((t, i) => migrateTask(t, i, nowMs, today))
       : [];
 
-    // Validate runner state
-    const validRunner = parsed.runner && isValidRunnerState(parsed.runner)
-      ? parsed.runner
-      : getDefaultRunner();
-
-    // Validate settings
-    const validSettings: Settings =
-      parsed.settings && isValidSettings(parsed.settings)
-        ? {
-            latestFinishMinutes: parsed.settings.latestFinishMinutes,
-            scheduledStartMinutes: parsed.settings.scheduledStartMinutes ?? null,
-          }
-        : getDefaultSettings();
-
-    return {
-      version: 1,
-      tasks: validTasks,
-      runner: validRunner,
-      settings: validSettings,
-    };
+    return { version: 2, tasks, ...validateRunnerAndSettings(parsed) };
   } catch {
     return null;
   }
 }
 
-export function saveState(state: PersistedStateV1): boolean {
+export function saveState(state: PersistedStateV2): boolean {
   if (typeof window === "undefined") return false;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(state));
     return true;
   } catch {
     // quota exceeded or private mode

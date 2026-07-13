@@ -9,6 +9,7 @@ import {
   parseHHMMToMinutes,
 } from "@/src/lib/time";
 import { useTransientFlag } from "@/src/lib/useTransientFlag";
+import { ensureNotificationPermission } from "@/src/lib/platform";
 import { PlanView } from "./PlanView";
 import { RunView } from "./RunView";
 import { Toast } from "./Toast";
@@ -48,13 +49,9 @@ export function App() {
   }
 
   function handleStartSprint() {
-    if (
-      typeof Notification !== "undefined" &&
-      Notification.permission === "default"
-    ) {
-      // Fire-and-forget; we don't block start on the prompt result.
-      Notification.requestPermission().catch(() => {});
-    }
+    // Fire-and-forget; we don't block start on the prompt result. Handles
+    // both native (Capacitor local notifications) and web permission flows.
+    void ensureNotificationPermission();
     actions.startSprint();
   }
 

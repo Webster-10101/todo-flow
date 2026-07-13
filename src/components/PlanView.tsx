@@ -11,6 +11,7 @@ import {
   type SprintScheduleRow,
 } from "@/src/lib/time";
 import { useGridPxPerMin } from "@/src/lib/layout";
+import { todayLocalISO } from "@/src/lib/dates";
 import { useEffect, useMemo, useState } from "react";
 import { TaskCanvas } from "./TaskCanvas";
 import { TaskRow } from "./TaskRow";
@@ -65,15 +66,19 @@ export function PlanView(props: {
     () => props.tasks.filter((t) => t.status === "queued" && t.inSprint && t.parentId === null),
     [props.tasks],
   );
+  // Done tasks stay in state as history (dated); the plan view only shows
+  // today's. Undone tasks roll forward to today on hydrate, so no date
+  // filter is needed for them.
+  const todayISO = useMemo(() => todayLocalISO(props.now), [props.now]);
   const sprintAll = useMemo(
     () =>
       props.tasks.filter(
         (t) =>
           t.inSprint &&
           t.parentId === null &&
-          (t.status === "queued" || t.status === "done"),
+          (t.status === "queued" || (t.status === "done" && t.date === todayISO)),
       ),
-    [props.tasks],
+    [props.tasks, todayISO],
   );
   const subtasksByParent = useMemo(() => {
     const map = new Map<string, Task[]>();
@@ -126,8 +131,11 @@ export function PlanView(props: {
   // sprint-done tasks live on the timeline (muted + line-through) and would be
   // duplicated otherwise.
   const done = useMemo(
-    () => props.tasks.filter((t) => t.status === "done" && !t.inSprint),
-    [props.tasks],
+    () =>
+      props.tasks.filter(
+        (t) => t.status === "done" && !t.inSprint && t.date === todayISO,
+      ),
+    [props.tasks, todayISO],
   );
 
   // Synthesize schedule rows for done sprint tasks (computeSprintSchedule

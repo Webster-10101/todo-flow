@@ -1,5 +1,7 @@
 import type { RunnerState, Settings, Task } from "./types";
+import { POSITION_GAP } from "./types";
 import { clampMinutes } from "./ids";
+import { todayLocalISO } from "./dates";
 
 export type State = {
   tasks: Task[];
@@ -28,35 +30,35 @@ export type DuplicatePayload = {
 export type InsertBreakPayload = { id: string; minutes: 5 | 10; nowMs: number };
 
 export type Action =
-  | { type: "HYDRATE"; tasks: Task[]; runner: RunnerState; settings: Settings }
+  | { type: "HYDRATE"; tasks: Task[]; runner: RunnerState; settings: Settings; nowMs: number }
   | { type: "ADD_TASK"; payload: AddTaskPayload }
   | { type: "ADD_SUBTASK"; payload: AddSubtaskPayload }
-  | { type: "EDIT_TITLE"; id: string; title: string }
-  | { type: "EDIT_MINUTES"; id: string; minutes: number }
-  | { type: "EDIT_NOTES"; id: string; notes: string }
+  | { type: "EDIT_TITLE"; id: string; title: string; nowMs: number }
+  | { type: "EDIT_MINUTES"; id: string; minutes: number; nowMs: number }
+  | { type: "EDIT_NOTES"; id: string; notes: string; nowMs: number }
   | { type: "TOGGLE_DONE"; id: string; nowMs: number }
-  | { type: "TOGGLE_IN_SPRINT"; id: string }
-  | { type: "SCHEDULE_TO_SPRINT"; id: string }
+  | { type: "TOGGLE_IN_SPRINT"; id: string; nowMs: number }
+  | { type: "SCHEDULE_TO_SPRINT"; id: string; nowMs: number }
   | { type: "DELETE_TASK"; id: string; nowMs: number }
   | { type: "DUPLICATE_TASK"; payload: DuplicatePayload }
-  | { type: "REORDER_SPRINT"; orderedIds: string[] }
-  | { type: "REORDER_SUBTASKS"; parentId: string; orderedChildIds: string[] }
-  | { type: "SET_TASK_TIME"; id: string; minutes: number | null }
+  | { type: "REORDER_SPRINT"; orderedIds: string[]; nowMs: number }
+  | { type: "REORDER_SUBTASKS"; parentId: string; orderedChildIds: string[]; nowMs: number }
+  | { type: "SET_TASK_TIME"; id: string; minutes: number | null; nowMs: number }
   | { type: "INSERT_BREAK_PLAN"; payload: InsertBreakPayload }
   | { type: "INSERT_BREAK_NEXT"; payload: InsertBreakPayload }
   | { type: "START_SPRINT"; nowMs: number }
   | { type: "START_NEXT"; nowMs: number }
   | { type: "COMPLETE_ACTIVE"; nowMs: number }
   | { type: "DELETE_ACTIVE"; nowMs: number }
-  | { type: "EXTEND_ACTIVE"; minutes: 5 | 10 }
-  | { type: "REDUCE_ACTIVE"; minutes: 5 | 10 }
+  | { type: "EXTEND_ACTIVE"; minutes: 5 | 10; nowMs: number }
+  | { type: "REDUCE_ACTIVE"; minutes: 5 | 10; nowMs: number }
   | { type: "STOP_AFTER_THIS_TASK" }
   | { type: "TOGGLE_PAUSE"; nowMs: number }
-  | { type: "EXIT_TO_PLAN" }
+  | { type: "EXIT_TO_PLAN"; nowMs: number }
   | { type: "AUTO_START_TICK"; nowMs: number }
   | { type: "SET_LATEST_FINISH"; minutes: number }
   | { type: "START_FRESH_DAY" }
-  | { type: "UNDO_DELETE" }
+  | { type: "UNDO_DELETE"; nowMs: number }
   | { type: "CLEAR_LAST_DELETION" }
   | { type: "SET_SCHEDULED_START"; minutes: number | null };
 
@@ -197,7 +199,13 @@ export function normalizeTasks(tasks: Task[]) {
       const bS = b.scheduledStartMinutes ?? Number.POSITIVE_INFINITY;
       return aS - bS;
     });
-  const laterQueued = topLevel.filter((t) => t.status === "queued" && !t.inSprint);
+  // Later and subtask order live in the persisted `position` sort key —
+  // incoming array order (which a server sync can't preserve) doesn't matter.
+  const byPosition = (a: Task, b: Task) =>
+    a.position - b.position || a.createdAt - b.createdAt;
+  const laterQueued = topLevel
+    .filter((t) => t.status === "queued" && !t.inSprint)
+    .sort(byPosition);
   const done = topLevel.filter((t) => t.status === "done");
 
   const orderedTop = [...sprintActive, ...sprintQueued, ...laterQueued, ...done];
@@ -205,7 +213,7 @@ export function normalizeTasks(tasks: Task[]) {
   for (const p of orderedTop) {
     out.push(p);
     const kids = byParent.get(p.id);
-    if (kids?.length) out.push(...kids);
+    if (kids?.length) out.push(...kids.slice().sort(byPosition));
   }
   return out;
 }
@@ -228,15 +236,75 @@ export function getNextStepId(tasks: Task[]) {
   return null;
 }
 
-function deriveParentStatusFromKids(parentId: string, tasks: Task[]): Task[] {
+function deriveParentStatusFromKids(
+  parentId: string,
+  tasks: Task[],
+  nowMs: number,
+): Task[] {
   const kids = tasks.filter((t) => t.parentId === parentId);
   if (kids.length === 0) return tasks;
   const allKidsDone = kids.every((k) => k.status === "done");
   const pIdx = tasks.findIndex((t) => t.id === parentId);
   if (pIdx === -1) return tasks;
+  const nextStatus = allKidsDone ? ("done" as const) : ("queued" as const);
+  if (tasks[pIdx].status === nextStatus) return tasks;
   const next = tasks.slice();
-  next[pIdx] = { ...next[pIdx], status: allKidsDone ? "done" : "queued" };
+  next[pIdx] = touch({ ...next[pIdx], status: nextStatus }, nowMs);
   return next;
+}
+
+// Stamp a task's LWW clock. EVERY reducer case that changes a task row must
+// run the changed rows through this — the sync engine trusts updatedAtMs to
+// decide which copy of a row wins.
+function touch(t: Task, nowMs: number): Task {
+  return { ...t, updatedAtMs: nowMs };
+}
+
+function maxPosition(tasks: Task[]): number {
+  let max = 0;
+  for (const t of tasks) if (t.position > max) max = t.position;
+  return max;
+}
+
+// Re-derive positions after an explicit reorder, stamping ONLY displaced rows.
+// Rows already in strictly-increasing position order keep their position (and
+// their updatedAtMs); runs of displaced rows spread evenly between the
+// surrounding stable anchors.
+function applyOrderPositions(ordered: Task[], nowMs: number): Task[] {
+  const out = ordered.slice();
+  let prev = Number.NEGATIVE_INFINITY;
+  let i = 0;
+  while (i < out.length) {
+    if (out[i].position > prev) {
+      prev = out[i].position;
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < out.length && out[j].position <= prev) j++;
+    const count = j - i;
+    const lower = Number.isFinite(prev) ? prev : 0;
+    const upper = j < out.length ? out[j].position : lower + POSITION_GAP * (count + 1);
+    const step = (upper - lower) / (count + 1);
+    for (let k = 0; k < count; k++) {
+      out[i + k] = touch({ ...out[i + k], position: lower + step * (k + 1) }, nowMs);
+    }
+    prev = out[j - 1].position;
+    i = j;
+  }
+  return out;
+}
+
+// On hydrate: undone tasks from earlier days roll forward to today; done
+// tasks keep their day — that's the free history that replaces destructive
+// day-clearing.
+function rollDay(tasks: Task[], nowMs: number): Task[] {
+  const today = todayLocalISO(new Date(nowMs));
+  return tasks.map((t) =>
+    t.status !== "done" && t.date < today
+      ? touch({ ...t, date: today }, nowMs)
+      : t,
+  );
 }
 
 function clearedRunner(runner: RunnerState, opts: { awaitingNext: boolean }): RunnerState {
@@ -253,9 +321,14 @@ function clearedRunner(runner: RunnerState, opts: { awaitingNext: boolean }): Ru
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "HYDRATE":
+      // Note for the sync engine: hydrate-time rewrites (rollDay,
+      // migrateScheduledTimes) must NOT be treated as local edits to push —
+      // dirty detection starts from the post-hydrate snapshot.
       return {
         ...state,
-        tasks: normalizeTasks(migrateScheduledTimes(action.tasks, action.settings)),
+        tasks: normalizeTasks(
+          rollDay(migrateScheduledTimes(action.tasks, action.settings), action.nowMs),
+        ),
         runner: action.runner,
         settings: action.settings,
       };
@@ -279,12 +352,16 @@ export function reducer(state: State, action: Action): State {
         parentId: null,
         inSprint: true,
         createdAt: nowMs,
+        date: todayLocalISO(new Date(nowMs)),
+        position: maxPosition(state.tasks) + POSITION_GAP,
+        updatedAtMs: nowMs,
       };
       return { ...state, tasks: normalizeTasks([t, ...state.tasks]) };
     }
 
     case "ADD_SUBTASK": {
       const { id, parentId, title, minutes, nowMs } = action.payload;
+      const siblings = state.tasks.filter((t) => t.parentId === parentId);
       const st: Task = {
         id,
         title,
@@ -297,6 +374,9 @@ export function reducer(state: State, action: Action): State {
         parentId,
         inSprint: true,
         createdAt: nowMs,
+        date: todayLocalISO(new Date(nowMs)),
+        position: maxPosition(siblings) + POSITION_GAP,
+        updatedAtMs: nowMs,
       };
       const next = state.tasks.slice();
       const parentIdx = next.findIndex((t) => t.id === parentId);
@@ -306,7 +386,7 @@ export function reducer(state: State, action: Action): State {
       const alreadyHasKids = next.some((t) => t.parentId === parentId);
       if (!alreadyHasKids) {
         const parent = next[parentIdx];
-        next[parentIdx] = { ...parent, estimateMinutes: 0, extraMinutes: 0 };
+        next[parentIdx] = touch({ ...parent, estimateMinutes: 0, extraMinutes: 0 }, nowMs);
       }
       let insertAt = parentIdx + 1;
       while (insertAt < next.length && next[insertAt].parentId === parentId) insertAt++;
@@ -318,7 +398,9 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         tasks: normalizeTasks(
-          state.tasks.map((t) => (t.id === action.id ? { ...t, title: action.title } : t)),
+          state.tasks.map((t) =>
+            t.id === action.id ? touch({ ...t, title: action.title }, action.nowMs) : t,
+          ),
         ),
       };
 
@@ -328,7 +410,10 @@ export function reducer(state: State, action: Action): State {
         tasks: normalizeTasks(
           state.tasks.map((t) =>
             t.id === action.id
-              ? { ...t, estimateMinutes: clampMinutes(action.minutes), extraMinutes: 0 }
+              ? touch(
+                  { ...t, estimateMinutes: clampMinutes(action.minutes), extraMinutes: 0 },
+                  action.nowMs,
+                )
               : t,
           ),
         ),
@@ -338,7 +423,7 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         tasks: state.tasks.map((t) =>
-          t.id === action.id ? { ...t, notes: action.notes } : t,
+          t.id === action.id ? touch({ ...t, notes: action.notes }, action.nowMs) : t,
         ),
       };
 
@@ -358,11 +443,11 @@ export function reducer(state: State, action: Action): State {
         if (t.id !== action.id) return t;
         const nextStatus: Task["status"] = t.status === "done" ? "queued" : "done";
         const nextSprint = nextStatus === "queued" ? true : t.inSprint;
-        return { ...t, status: nextStatus, inSprint: nextSprint };
+        return touch({ ...t, status: nextStatus, inSprint: nextSprint }, action.nowMs);
       });
 
       if (target.parentId) {
-        next = deriveParentStatusFromKids(target.parentId, next);
+        next = deriveParentStatusFromKids(target.parentId, next, action.nowMs);
       }
 
       return { ...state, tasks: normalizeTasks(next) };
@@ -372,7 +457,9 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         tasks: normalizeTasks(
-          state.tasks.map((t) => (t.id === action.id ? { ...t, inSprint: !t.inSprint } : t)),
+          state.tasks.map((t) =>
+            t.id === action.id ? touch({ ...t, inSprint: !t.inSprint }, action.nowMs) : t,
+          ),
         ),
       };
 
@@ -390,7 +477,7 @@ export function reducer(state: State, action: Action): State {
         tasks: normalizeTasks(
           state.tasks.map((t) =>
             t.id === action.id
-              ? { ...t, inSprint: true, scheduledStartMinutes: slot }
+              ? touch({ ...t, inSprint: true, scheduledStartMinutes: slot }, action.nowMs)
               : t,
           ),
         ),
@@ -428,6 +515,11 @@ export function reducer(state: State, action: Action): State {
         scheduledStartMinutes: null,
         createdAt: nowMs,
         status: "queued",
+        date: todayLocalISO(new Date(nowMs)),
+        // Just after the original in position order; normalizeTasks tiebreaks
+        // by createdAt if positions collide.
+        position: t.position + 1,
+        updatedAtMs: nowMs,
         ...overrides,
       });
 
@@ -475,9 +567,10 @@ export function reducer(state: State, action: Action): State {
         arr.push(t);
         childrenByParent.set(t.parentId, arr);
       }
-      const reorderedTop = action.orderedIds
-        .map((id) => byId.get(id))
-        .filter((t): t is Task => Boolean(t));
+      const reorderedTop = applyOrderPositions(
+        action.orderedIds.map((id) => byId.get(id)).filter((t): t is Task => Boolean(t)),
+        action.nowMs,
+      );
       const reorderedWithKids: Task[] = [];
       for (const p of reorderedTop) {
         reorderedWithKids.push(p);
@@ -496,7 +589,9 @@ export function reducer(state: State, action: Action): State {
         ...state,
         tasks: normalizeTasks(
           state.tasks.map((t) =>
-            t.id === action.id ? { ...t, scheduledStartMinutes: snapped } : t,
+            t.id === action.id
+              ? touch({ ...t, scheduledStartMinutes: snapped }, action.nowMs)
+              : t,
           ),
         ),
       };
@@ -518,7 +613,7 @@ export function reducer(state: State, action: Action): State {
         .filter((t): t is Task => Boolean(t));
       for (const k of existingKids) if (!action.orderedChildIds.includes(k.id)) reordered.push(k);
 
-      next.splice(start, end - start, ...reordered);
+      next.splice(start, end - start, ...applyOrderPositions(reordered, action.nowMs));
       return { ...state, tasks: normalizeTasks(next) };
     }
 
@@ -537,6 +632,9 @@ export function reducer(state: State, action: Action): State {
         parentId: null,
         inSprint: true,
         createdAt: nowMs,
+        date: todayLocalISO(new Date(nowMs)),
+        position: maxPosition(state.tasks) + POSITION_GAP,
+        updatedAtMs: nowMs,
       };
       const sprintActive = state.tasks.filter((t) => t.status === "active" && t.inSprint);
       const sprintQueued = state.tasks.filter((t) => t.status === "queued" && t.inSprint);
@@ -563,6 +661,9 @@ export function reducer(state: State, action: Action): State {
         parentId: null,
         inSprint: true,
         createdAt: nowMs,
+        date: todayLocalISO(new Date(nowMs)),
+        position: maxPosition(state.tasks) + POSITION_GAP,
+        updatedAtMs: nowMs,
       };
       return { ...state, tasks: normalizeTasks([breakTask, ...state.tasks]) };
     }
@@ -571,8 +672,8 @@ export function reducer(state: State, action: Action): State {
       const firstId = getNextStepId(state.tasks);
       if (!firstId) return state;
       const next = state.tasks.map((t) => {
-        if (t.status === "active") return { ...t, status: "queued" as const };
-        if (t.id === firstId) return { ...t, status: "active" as const };
+        if (t.status === "active") return touch({ ...t, status: "queued" as const }, action.nowMs);
+        if (t.id === firstId) return touch({ ...t, status: "active" as const }, action.nowMs);
         return t;
       });
       return {
@@ -596,8 +697,8 @@ export function reducer(state: State, action: Action): State {
         };
       }
       const next = state.tasks.map((t) => {
-        if (t.status === "active") return { ...t, status: "queued" as const };
-        if (t.id === nextId) return { ...t, status: "active" as const };
+        if (t.status === "active") return touch({ ...t, status: "queued" as const }, action.nowMs);
+        if (t.id === nextId) return touch({ ...t, status: "active" as const }, action.nowMs);
         return t;
       });
       return {
@@ -622,11 +723,11 @@ export function reducer(state: State, action: Action): State {
       const activeId = state.runner.activeTaskId;
       if (!activeId) return state;
       let next: Task[] = state.tasks.map((t): Task =>
-        t.id === activeId ? { ...t, status: "done" } : t,
+        t.id === activeId ? touch({ ...t, status: "done" }, action.nowMs) : t,
       );
       const doneTask = state.tasks.find((t) => t.id === activeId);
       if (doneTask?.parentId) {
-        next = deriveParentStatusFromKids(doneTask.parentId, next);
+        next = deriveParentStatusFromKids(doneTask.parentId, next, action.nowMs);
       }
       const shouldExit = state.runner.stopAfterThisTask;
       return {
@@ -662,7 +763,9 @@ export function reducer(state: State, action: Action): State {
         ...state,
         tasks: normalizeTasks(
           state.tasks.map((t) =>
-            t.id === id ? { ...t, extraMinutes: t.extraMinutes + action.minutes } : t,
+            t.id === id
+              ? touch({ ...t, extraMinutes: t.extraMinutes + action.minutes }, action.nowMs)
+              : t,
           ),
         ),
       };
@@ -681,7 +784,10 @@ export function reducer(state: State, action: Action): State {
             const remaining = action.minutes - takeFromExtra;
             const nextExtra = currentExtra - takeFromExtra;
             const nextEstimate = Math.max(1, Math.round(t.estimateMinutes - remaining));
-            return { ...t, extraMinutes: nextExtra, estimateMinutes: nextEstimate };
+            return touch(
+              { ...t, extraMinutes: nextExtra, estimateMinutes: nextEstimate },
+              action.nowMs,
+            );
           }),
         ),
       };
@@ -725,7 +831,7 @@ export function reducer(state: State, action: Action): State {
 
     case "EXIT_TO_PLAN": {
       const next = state.tasks.map((t) =>
-        t.status === "active" ? { ...t, status: "queued" as const } : t,
+        t.status === "active" ? touch({ ...t, status: "queued" as const }, action.nowMs) : t,
       );
       return {
         ...state,
@@ -757,7 +863,11 @@ export function reducer(state: State, action: Action): State {
 
     case "UNDO_DELETE": {
       if (!state.lastDeletion) return state;
-      const restored = [...state.tasks, ...state.lastDeletion.tasks];
+      // Re-stamp restored rows so the undo out-LWWs the delete's tombstone.
+      const restored = [
+        ...state.tasks,
+        ...state.lastDeletion.tasks.map((t) => touch(t, action.nowMs)),
+      ];
       return { ...state, tasks: normalizeTasks(restored), lastDeletion: null };
     }
 

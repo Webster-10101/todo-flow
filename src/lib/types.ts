@@ -1,3 +1,7 @@
+// Sparse ordering gap for Task.position — midpoint insertion between
+// neighbours keeps reorders from dirtying every row (matters once rows sync).
+export const POSITION_GAP = 1024;
+
 export type TaskKind = "task" | "break";
 export type TaskStatus = "queued" | "active" | "done";
 
@@ -16,6 +20,15 @@ export type Task = {
   parentId: string | null;
   inSprint: boolean;
   createdAt: number;
+  // Local calendar day this task belongs to (YYYY-MM-DD). Undone tasks roll
+  // forward on hydrate; done tasks keep their day (that's the history).
+  date: string;
+  // Sparse sort key for the Later list and subtask order (midpoint insertion,
+  // seed gap 1024). Sprint order derives from scheduledStartMinutes instead.
+  position: number;
+  // Last-modified stamp (epoch ms) — the sync engine's LWW clock. Every
+  // reducer mutation must stamp the rows it touches (see touch()).
+  updatedAtMs: number;
 };
 
 export type Mode = "plan" | "run";
@@ -42,8 +55,18 @@ export type Settings = {
   scheduledStartMinutes: number | null;
 };
 
+// v1 tasks predate date/position/updatedAtMs — loadState() migrates them.
+export type PersistedTaskV1 = Omit<Task, "date" | "position" | "updatedAtMs">;
+
 export type PersistedStateV1 = {
   version: 1;
+  tasks: PersistedTaskV1[];
+  runner: RunnerState;
+  settings: Settings;
+};
+
+export type PersistedStateV2 = {
+  version: 2;
   tasks: Task[];
   runner: RunnerState;
   settings: Settings;

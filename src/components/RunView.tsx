@@ -13,6 +13,11 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInterval } from "@/src/lib/useInterval";
 import { useTransientFlag } from "@/src/lib/useTransientFlag";
+import {
+  cancelTimerNotification,
+  isNative,
+  scheduleTimerNotification,
+} from "@/src/lib/platform";
 
 export function RunView(props: {
   now: Date;
@@ -96,17 +101,48 @@ export function RunView(props: {
     if (isTimeUp) doneButtonRef.current?.focus();
   }, [isTimeUp]);
 
-  // Play ding sound + system notification when time is up
+  // Play ding sound + system notification when time is up. On native the
+  // pre-scheduled local notification covers the backgrounded case, so the
+  // web-only Notification path is skipped there.
   useEffect(() => {
     if (isTimeUp && !hasPlayedDing.current) {
       hasPlayedDing.current = true;
       playDing();
-      maybeFireNotification(activeTask?.title ?? "Active task");
+      if (!isNative()) maybeFireNotification(activeTask?.title ?? "Active task");
     }
     if (!isTimeUp) {
       hasPlayedDing.current = false;
     }
   }, [isTimeUp, activeTask?.title]);
+
+  // Native: keep a local notification scheduled at the active task's expected
+  // end so time-up fires even with the app backgrounded. Reschedules on
+  // start/extend/reduce/resume (deps change), cancels on pause/complete.
+  const notifyEndMs = useMemo(() => {
+    if (!activeTask || !props.runner.activeStartedAt) return null;
+    if (props.runner.pausedAt) return null;
+    return (
+      props.runner.activeStartedAt +
+      minutesToMs(getTaskTotalMinutes(activeTask)) +
+      props.runner.pauseAccumulatedMs
+    );
+  }, [
+    activeTask,
+    props.runner.activeStartedAt,
+    props.runner.pausedAt,
+    props.runner.pauseAccumulatedMs,
+  ]);
+  const activeTitleForNotify = activeTask?.title ?? "";
+  useEffect(() => {
+    if (!isNative()) return;
+    if (notifyEndMs == null) {
+      void cancelTimerNotification();
+      return;
+    }
+    void scheduleTimerNotification({ taskTitle: activeTitleForNotify, atMs: notifyEndMs });
+  }, [notifyEndMs, activeTitleForNotify]);
+  // Cancel any pending schedule when leaving run mode entirely.
+  useEffect(() => () => void cancelTimerNotification(), []);
 
   // Global keyboard shortcuts while in run mode
   const {

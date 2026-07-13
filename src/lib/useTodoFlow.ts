@@ -40,6 +40,7 @@ export function useTodoFlow() {
         tasks: coercedTasks,
         runner: { ...initialState.runner, ...loaded.runner },
         settings: loaded.settings,
+        nowMs: Date.now(),
       });
     }
     setHydrated(true);
@@ -56,7 +57,7 @@ export function useTodoFlow() {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       const ok = saveState({
-        version: 1,
+        version: 2,
         tasks: state.tasks,
         runner: state.runner,
         settings: state.settings,
@@ -70,7 +71,7 @@ export function useTodoFlow() {
   useEffect(() => {
     function flush() {
       const s = latestStateRef.current;
-      saveState({ version: 1, tasks: s.tasks, runner: s.runner, settings: s.settings });
+      saveState({ version: 2, tasks: s.tasks, runner: s.runner, settings: s.settings });
     }
     window.addEventListener("beforeunload", flush);
     window.addEventListener("pagehide", flush);
@@ -126,17 +127,17 @@ export function useTodoFlow() {
           payload: { id: uid(), parentId, title, minutes, nowMs: Date.now() },
         }),
       editTitle: (id: string, title: string) =>
-        dispatch({ type: "EDIT_TITLE", id, title }),
+        dispatch({ type: "EDIT_TITLE", id, title, nowMs: Date.now() }),
       editMinutes: (id: string, minutes: number) =>
-        dispatch({ type: "EDIT_MINUTES", id, minutes }),
+        dispatch({ type: "EDIT_MINUTES", id, minutes, nowMs: Date.now() }),
       editNotes: (id: string, notes: string) =>
-        dispatch({ type: "EDIT_NOTES", id, notes }),
+        dispatch({ type: "EDIT_NOTES", id, notes, nowMs: Date.now() }),
       toggleDone: (id: string) =>
         dispatch({ type: "TOGGLE_DONE", id, nowMs: Date.now() }),
       toggleInSprint: (id: string) =>
-        dispatch({ type: "TOGGLE_IN_SPRINT", id }),
+        dispatch({ type: "TOGGLE_IN_SPRINT", id, nowMs: Date.now() }),
       scheduleToSprint: (id: string) =>
-        dispatch({ type: "SCHEDULE_TO_SPRINT", id }),
+        dispatch({ type: "SCHEDULE_TO_SPRINT", id, nowMs: Date.now() }),
       deleteTask: (id: string) =>
         dispatch({ type: "DELETE_TASK", id, nowMs: Date.now() }),
       duplicateTask: (id: string) => {
@@ -151,11 +152,11 @@ export function useTodoFlow() {
         });
       },
       reorderSprint: (orderedIds: string[]) =>
-        dispatch({ type: "REORDER_SPRINT", orderedIds }),
+        dispatch({ type: "REORDER_SPRINT", orderedIds, nowMs: Date.now() }),
       reorderSubtasks: (parentId: string, orderedChildIds: string[]) =>
-        dispatch({ type: "REORDER_SUBTASKS", parentId, orderedChildIds }),
+        dispatch({ type: "REORDER_SUBTASKS", parentId, orderedChildIds, nowMs: Date.now() }),
       setTaskTime: (id: string, minutes: number | null) =>
-        dispatch({ type: "SET_TASK_TIME", id, minutes }),
+        dispatch({ type: "SET_TASK_TIME", id, minutes, nowMs: Date.now() }),
       insertBreakInPlan: (minutes: 5 | 10) =>
         dispatch({
           type: "INSERT_BREAK_PLAN",
@@ -171,18 +172,18 @@ export function useTodoFlow() {
       completeActive: () => dispatch({ type: "COMPLETE_ACTIVE", nowMs: Date.now() }),
       deleteActive: () => dispatch({ type: "DELETE_ACTIVE", nowMs: Date.now() }),
       extendActive: (minutes: 5 | 10) =>
-        dispatch({ type: "EXTEND_ACTIVE", minutes }),
+        dispatch({ type: "EXTEND_ACTIVE", minutes, nowMs: Date.now() }),
       reduceActive: (minutes: 5 | 10) =>
-        dispatch({ type: "REDUCE_ACTIVE", minutes }),
+        dispatch({ type: "REDUCE_ACTIVE", minutes, nowMs: Date.now() }),
       stopAfterThisTask: () => dispatch({ type: "STOP_AFTER_THIS_TASK" }),
       togglePause: () => dispatch({ type: "TOGGLE_PAUSE", nowMs: Date.now() }),
-      exitToPlan: () => dispatch({ type: "EXIT_TO_PLAN" }),
+      exitToPlan: () => dispatch({ type: "EXIT_TO_PLAN", nowMs: Date.now() }),
       setLatestFinish: (minutes: number) =>
         dispatch({ type: "SET_LATEST_FINISH", minutes }),
       setScheduledStart: (minutes: number | null) =>
         dispatch({ type: "SET_SCHEDULED_START", minutes }),
       startFreshDay: () => dispatch({ type: "START_FRESH_DAY" }),
-      undoDelete: () => dispatch({ type: "UNDO_DELETE" }),
+      undoDelete: () => dispatch({ type: "UNDO_DELETE", nowMs: Date.now() }),
     }),
     [],
   );

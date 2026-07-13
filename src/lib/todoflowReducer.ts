@@ -60,7 +60,13 @@ export type Action =
   | { type: "START_FRESH_DAY" }
   | { type: "UNDO_DELETE"; nowMs: number }
   | { type: "CLEAR_LAST_DELETION" }
-  | { type: "SET_SCHEDULED_START"; minutes: number | null };
+  | { type: "SET_SCHEDULED_START"; minutes: number | null }
+  | {
+      type: "APPLY_REMOTE_TASKS";
+      upserts: Task[];
+      deletions: Array<{ id: string; deletedAtMs: number }>;
+    }
+  | { type: "APPLY_REMOTE_SETTINGS"; settings: Settings };
 
 export const AUTO_START_DELAY_MS = 15_000;
 
@@ -214,6 +220,13 @@ export function normalizeTasks(tasks: Task[]) {
     out.push(p);
     const kids = byParent.get(p.id);
     if (kids?.length) out.push(...kids.slice().sort(byPosition));
+    byParent.delete(p.id);
+  }
+  // Keep orphan children (parent not in this array) instead of dropping them.
+  // Realtime sync applies single-row events, so a child can legitimately
+  // arrive before its parent — dropping it here would tombstone it.
+  for (const kids of byParent.values()) {
+    out.push(...kids.slice().sort(byPosition));
   }
   return out;
 }
@@ -873,6 +886,43 @@ export function reducer(state: State, action: Action): State {
 
     case "CLEAR_LAST_DELETION":
       return state.lastDeletion ? { ...state, lastDeletion: null } : state;
+
+    // Inbound sync: last-write-wins per row on updatedAtMs. Rows the local
+    // copy has touched more recently are skipped; tombstones remove unless
+    // the local row is newer than the delete.
+    case "APPLY_REMOTE_TASKS": {
+      const byId = new Map(state.tasks.map((t) => [t.id, t] as const));
+      let changed = false;
+      for (const incoming of action.upserts) {
+        const cur = byId.get(incoming.id);
+        if (cur && cur.updatedAtMs >= incoming.updatedAtMs) continue;
+        byId.set(incoming.id, incoming);
+        changed = true;
+      }
+      for (const del of action.deletions) {
+        const cur = byId.get(del.id);
+        if (!cur) continue;
+        if (cur.updatedAtMs > del.deletedAtMs) continue;
+        byId.delete(del.id);
+        changed = true;
+      }
+      if (!changed) return state;
+
+      // If the task being run right now was completed or deleted on another
+      // device, clear the runner rather than ticking a ghost.
+      let runner = state.runner;
+      const activeId = runner.activeTaskId;
+      if (activeId) {
+        const active = byId.get(activeId);
+        if (!active || active.status === "done") {
+          runner = clearedRunner(runner, { awaitingNext: true });
+        }
+      }
+      return { ...state, tasks: normalizeTasks([...byId.values()]), runner };
+    }
+
+    case "APPLY_REMOTE_SETTINGS":
+      return { ...state, settings: action.settings };
 
     default:
       return state;

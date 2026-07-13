@@ -10,6 +10,7 @@ import {
 import { loadState, saveState } from "./storage";
 import { uid } from "./ids";
 import { useInterval } from "./useInterval";
+import { useSync } from "./sync/useSync";
 import {
   computeSprintSchedule,
   getSprintPlannedMinutes,
@@ -49,6 +50,10 @@ export function useTodoFlow() {
   // Latest state ref — used by flush handlers and the duplicate action creator
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
+
+  // Cross-device sync (no-op until Supabase env vars are set and the user
+  // signs in — the app stays fully local-first either way).
+  useSync({ hydrated, tasks: state.tasks, settings: state.settings, dispatch });
 
   // Debounced save
   const saveTimer = useRef<number | null>(null);

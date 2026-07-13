@@ -11,10 +11,12 @@ import {
   type SprintScheduleRow,
 } from "@/src/lib/time";
 import { useGridPxPerMin } from "@/src/lib/layout";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { TaskCanvas } from "./TaskCanvas";
 import { TaskRow } from "./TaskRow";
 import { SubtasksPopover } from "./SubtasksPopover";
+import { BlockActionBar } from "./BlockActionBar";
+import { MobileDock } from "./MobileDock";
 
 export function PlanView(props: {
   now: Date;
@@ -36,6 +38,7 @@ export function PlanView(props: {
   onToggleDone: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleInSprint: (id: string) => void;
+  onScheduleToSprint: (id: string) => void;
   onStartFreshDay: () => void;
   onOpenExport: () => void;
 }) {
@@ -45,6 +48,9 @@ export function PlanView(props: {
     parentId: string;
     anchor: DOMRect;
   } | null>(null);
+  // Selected canvas block — drives the mobile BlockActionBar + chunky resize
+  // handle. Selection is harmless on desktop (just a ring).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const canAdd = newTitle.trim().length > 0;
   const pxPerMin = useGridPxPerMin();
 
@@ -151,6 +157,26 @@ export function PlanView(props: {
     settings: props.settings,
   });
 
+  // Clear the selection when the selected task leaves the canvas
+  // (deleted, moved to Later, sprint started).
+  useEffect(() => {
+    if (selectedId && !sprintAll.some((t) => t.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [selectedId, sprintAll]);
+
+  const selectedTask = useMemo(
+    () => (selectedId ? sprintAll.find((t) => t.id === selectedId) ?? null : null),
+    [selectedId, sprintAll],
+  );
+  const selectedRow = useMemo(
+    () =>
+      selectedTask
+        ? canvasSchedule.rows.find((r) => r.taskId === selectedTask.id) ?? null
+        : null,
+    [selectedTask, canvasSchedule],
+  );
+
   const doneCount = useMemo(
     () => props.tasks.filter((t) => t.status === "done").length,
     [props.tasks],
@@ -164,8 +190,10 @@ export function PlanView(props: {
   );
 
   return (
-    <div className="space-y-6 md:space-y-0 md:grid md:grid-cols-[320px_1fr] md:gap-6">
-      <aside className="space-y-4 md:sticky md:top-4 md:self-start">
+    <div className="space-y-6 pb-48 md:pb-0 md:space-y-0 md:grid md:grid-cols-[320px_1fr] md:gap-6">
+      {/* Desktop sidebar — on phones its contents move to the fixed MobileDock
+          below, so the canvas renders first. */}
+      <aside className="hidden md:block space-y-4 md:sticky md:top-4 md:self-start">
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
@@ -326,6 +354,8 @@ export function PlanView(props: {
           childCountById={childCountById}
           minutesOverrideById={minutesOverrideById}
           minutesReadOnlyById={minutesReadOnlyById}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
         />
       </div>
 
@@ -335,7 +365,28 @@ export function PlanView(props: {
             <div className="text-sm text-muted">Later</div>
             <div className="text-sm text-muted">{later.length}</div>
           </div>
-          <div className="space-y-3">
+          {/* Phones: horizontal chip row — tap to schedule into the next free
+              slot. Desktop keeps the full editable rows. */}
+          <div className="md:hidden -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            {later
+              .filter((t) => t.parentId === null)
+              .map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => props.onScheduleToSprint(t.id)}
+                  className="flex max-w-[240px] shrink-0 items-center gap-1.5 rounded-full border border-line bg-white/80 px-3 py-2 shadow-soft active:bg-soft transition-colors"
+                >
+                  <span className="truncate text-sm text-ink">
+                    {t.title || "Untitled"}
+                  </span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted">
+                    {Math.max(1, Math.round(t.estimateMinutes + t.extraMinutes))}m
+                  </span>
+                </button>
+              ))}
+          </div>
+          <div className="hidden md:block space-y-3">
             {later.map((t) => (
               <TaskRow
                 key={t.id}
@@ -352,6 +403,37 @@ export function PlanView(props: {
           </div>
         </div>
       ) : null}
+
+      {/* Phones: rarely-used day utilities live at the end of the scroll —
+          the desktop sidebar copies are hidden below md. */}
+      <div className="md:hidden flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={props.onOpenExport}
+          disabled={exportableCount === 0}
+          className={[
+            "h-9 rounded-lg border border-line px-3 text-xs transition-colors",
+            exportableCount === 0
+              ? "bg-white/40 text-muted cursor-not-allowed"
+              : "bg-white/70 text-ink active:bg-soft",
+          ].join(" ")}
+        >
+          Export tasks
+        </button>
+        <button
+          type="button"
+          onClick={props.onStartFreshDay}
+          disabled={doneCount === 0}
+          className={[
+            "h-9 rounded-lg border border-line px-3 text-xs transition-colors",
+            doneCount === 0
+              ? "bg-white/40 text-muted cursor-not-allowed"
+              : "bg-white/70 text-ink active:bg-soft",
+          ].join(" ")}
+        >
+          Start fresh day
+        </button>
+      </div>
 
       {done.length ? (
         <div className="space-y-3">
@@ -389,6 +471,42 @@ export function PlanView(props: {
           onDelete={props.onDelete}
         />
       ) : null}
+
+      <MobileDock
+        queuedCount={queuedSprint.length}
+        onAddTask={props.onAddTask}
+        onInsertBreak={props.onInsertBreak}
+        onStartSprint={props.onStartSprint}
+        actionBar={
+          selectedTask ? (
+            <BlockActionBar
+              task={selectedTask}
+              minutes={
+                selectedRow?.minutes ??
+                Math.max(
+                  1,
+                  Math.round(selectedTask.estimateMinutes + selectedTask.extraMinutes),
+                )
+              }
+              endsAtMs={selectedRow?.endMs ?? null}
+              minutesReadOnly={Boolean(minutesReadOnlyById[selectedTask.id])}
+              childCount={childCountById[selectedTask.id] ?? 0}
+              onClose={() => setSelectedId(null)}
+              onToggleDone={props.onToggleDone}
+              onEditMinutes={props.onEditMinutes}
+              onDuplicate={props.onDuplicate}
+              onDelete={props.onDelete}
+              onToLater={(id) => {
+                props.onToggleInSprint(id);
+                setSelectedId(null);
+              }}
+              onOpenSubtasks={(id, anchor) =>
+                setSubtaskPopover({ parentId: id, anchor })
+              }
+            />
+          ) : null
+        }
+      />
     </div>
   );
 }

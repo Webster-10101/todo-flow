@@ -34,6 +34,9 @@ export function App() {
   const saveErrorToast = useTransientFlag(3000);
   const [praise, setPraise] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  // Mobile-only: the start-at / latest-finish inputs hide behind the
+  // projected-finish pill to keep the canvas above the fold.
+  const [daySettingsOpen, setDaySettingsOpen] = useState(false);
 
   function handleStartFreshDay() {
     const doneCount = tasks.filter((t) => t.status === "done").length;
@@ -72,9 +75,9 @@ export function App() {
   return (
     <main className="min-h-screen px-4 pt-7 sm:px-8 sm:pt-10 pb-[calc(1.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(2.5rem+env(safe-area-inset-bottom))]">
       <div className="mx-auto w-full max-w-[980px]">
-        <header className="mb-6 md:mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <header className="mb-4 md:mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-3 md:gap-4">
           <div className="text-center md:text-left">
-            <div className="text-sm text-muted flex items-center justify-center md:justify-start">
+            <div className="hidden md:flex text-sm text-muted items-center justify-center md:justify-start">
               <a
                 href="https://focusmate.com"
                 target="_blank"
@@ -86,10 +89,69 @@ export function App() {
               <span className="mx-2 text-muted">·</span>
               TodoFlow
             </div>
-            <div className="mt-1 text-3xl md:text-4xl text-ink tracking-tight">Todo Flow</div>
+            <div className="mt-0 md:mt-1 text-2xl md:text-4xl text-ink tracking-tight">Todo Flow</div>
+            {/* Mobile status strip: projected finish (tap for day settings) + total */}
+            <div className="md:hidden mt-2 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setDaySettingsOpen((v) => !v)}
+                className={[
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm tabular-nums transition-colors",
+                  pastCutoff
+                    ? "border-rose-200 bg-rose-50 text-rose-900"
+                    : "border-teal-200 bg-teal-50 text-teal-900",
+                ].join(" ")}
+                aria-expanded={daySettingsOpen}
+                aria-label="Projected finish — tap for day settings"
+              >
+                ends {formatClock(projectedFinish)}
+                <span className="text-[10px] opacity-60">{daySettingsOpen ? "▲" : "▼"}</span>
+              </button>
+              <span className="text-xs text-muted tabular-nums">
+                {formatTotalMinutes(sprintTotalMinutes)} planned
+              </span>
+            </div>
+            {daySettingsOpen ? (
+              <div className="md:hidden mt-2 flex items-center justify-center gap-3">
+                <label className="flex items-center gap-1.5 text-xs text-muted" htmlFor="scheduledStartMobile">
+                  Start
+                  <input
+                    id="scheduledStartMobile"
+                    type="time"
+                    value={
+                      settings.scheduledStartMinutes != null
+                        ? formatMinutesOfDay(settings.scheduledStartMinutes)
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (!raw) {
+                        actions.setScheduledStart(null);
+                        return;
+                      }
+                      actions.setScheduledStart(parseHHMMToMinutes(raw));
+                    }}
+                    className="rounded-lg border border-line bg-white/80 px-2 py-1.5 text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-muted" htmlFor="latestFinishMobile">
+                  Finish by
+                  <input
+                    id="latestFinishMobile"
+                    type="time"
+                    value={formatMinutesOfDay(settings.latestFinishMinutes)}
+                    onChange={(e) => {
+                      const mins = parseHHMMToMinutes(e.target.value);
+                      if (mins != null) actions.setLatestFinish(mins);
+                    }}
+                    className="rounded-lg border border-line bg-white/80 px-2 py-1.5 text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
+                  />
+                </label>
+              </div>
+            ) : null}
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 rounded-xl border border-line bg-white/70 px-4 py-3 shadow-soft backdrop-blur">
+          <div className="hidden md:grid grid-cols-2 md:grid-cols-4 gap-3 rounded-xl border border-line bg-white/70 px-4 py-3 shadow-soft backdrop-blur">
             <div className="min-w-0">
               <div className="text-xs text-muted">Projected finish</div>
               <div className="mt-0.5 inline-flex items-center rounded-lg border border-line bg-white/70 px-2 py-1 font-mono tabular-nums tracking-widest text-sm text-ink">
@@ -150,7 +212,8 @@ export function App() {
 
         <div
           className={[
-            "mb-6 rounded-xl border px-5 py-4 text-sm shadow-soft",
+            // Mobile gets the compact header pill instead of this banner.
+            "hidden md:block mb-6 rounded-xl border px-5 py-4 text-sm shadow-soft",
             pastCutoff
               ? "border-rose-200 bg-rose-50 text-rose-900"
               : "border-teal-200 bg-teal-50 text-teal-900",
@@ -204,6 +267,7 @@ export function App() {
             onToggleDone={actions.toggleDone}
             onDelete={actions.deleteTask}
             onToggleInSprint={actions.toggleInSprint}
+            onScheduleToSprint={actions.scheduleToSprint}
             onStartFreshDay={handleStartFreshDay}
             onOpenExport={() => setExportOpen(true)}
           />

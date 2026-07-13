@@ -135,6 +135,8 @@ export function useTodoFlow() {
         dispatch({ type: "TOGGLE_DONE", id, nowMs: Date.now() }),
       toggleInSprint: (id: string) =>
         dispatch({ type: "TOGGLE_IN_SPRINT", id }),
+      scheduleToSprint: (id: string) =>
+        dispatch({ type: "SCHEDULE_TO_SPRINT", id }),
       deleteTask: (id: string) =>
         dispatch({ type: "DELETE_TASK", id, nowMs: Date.now() }),
       duplicateTask: (id: string) => {

@@ -36,6 +36,7 @@ export type Action =
   | { type: "EDIT_NOTES"; id: string; notes: string }
   | { type: "TOGGLE_DONE"; id: string; nowMs: number }
   | { type: "TOGGLE_IN_SPRINT"; id: string }
+  | { type: "SCHEDULE_TO_SPRINT"; id: string }
   | { type: "DELETE_TASK"; id: string; nowMs: number }
   | { type: "DUPLICATE_TASK"; payload: DuplicatePayload }
   | { type: "REORDER_SPRINT"; orderedIds: string[] }
@@ -374,6 +375,27 @@ export function reducer(state: State, action: Action): State {
           state.tasks.map((t) => (t.id === action.id ? { ...t, inSprint: !t.inSprint } : t)),
         ),
       };
+
+    // Move a Later task onto the canvas in one step: into the sprint AND
+    // scheduled at the next free slot (TOGGLE_IN_SPRINT only flips the flag,
+    // which leaves the task unplaced). Used by the mobile Later chips.
+    case "SCHEDULE_TO_SPRINT": {
+      const target = state.tasks.find((t) => t.id === action.id);
+      if (!target || target.parentId !== null || target.status === "done") return state;
+      const baseMin = state.settings.scheduledStartMinutes ?? DEFAULT_DAY_START_MIN;
+      const slot =
+        target.scheduledStartMinutes ?? findNextFreeSlot({ tasks: state.tasks, baseMin });
+      return {
+        ...state,
+        tasks: normalizeTasks(
+          state.tasks.map((t) =>
+            t.id === action.id
+              ? { ...t, inSprint: true, scheduledStartMinutes: slot }
+              : t,
+          ),
+        ),
+      };
+    }
 
     case "DELETE_TASK": {
       const removed = state.tasks.filter((t) => t.id === action.id || t.parentId === action.id);

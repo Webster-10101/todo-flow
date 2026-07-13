@@ -82,6 +82,9 @@ function CalendarIcon() {
 // size — the icons sit too close together for the full 44px without overlap.
 const iconBtnClass =
   "relative shrink-0 inline-flex h-5 w-5 items-center justify-center rounded text-muted hover:text-ink hover:bg-ink/5 transition-colors after:absolute after:-inset-2 after:content-['']";
+// Desktop-only variant: on touch these actions live in the BlockActionBar
+// (tap a block to select it), so the tiny inline icons stay hidden.
+const iconBtnDesktopClass = `${iconBtnClass} hidden md:inline-flex`;
 
 // Matches the default minutes in useTodoFlow.addTaskAtTime — keep in sync.
 const GRID_CREATE_MINUTES = 50;
@@ -151,6 +154,8 @@ function TaskBlock(props: {
   minutesOverride?: number;
   maxMinutes?: number;
   canvasStartMin: number;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: props.task.id,
@@ -254,17 +259,19 @@ function TaskBlock(props: {
         top: topPx,
         height: heightPx,
         transform: transform ? `translate3d(0, ${transform.y}px, 0)` : undefined,
-        zIndex: isDragging ? 30 : 1,
+        zIndex: isDragging ? 30 : props.selected ? 20 : 1,
         opacity: isDragging ? 0.92 : 1,
       }}
     >
       <div
         {...attributes}
         {...listeners}
+        onClick={() => props.onSelect?.()}
         className={[
           "relative h-full w-full overflow-hidden rounded-lg border shadow-soft flex flex-col",
           isBreak ? "border-emerald-200/80 bg-emerald-50/90" : "border-line/80",
           muted ? "opacity-55 saturate-50" : "",
+          props.selected ? "ring-2 ring-ink/30" : "",
           "pl-3 pr-2 py-1.5",
         ].join(" ")}
         style={{
@@ -334,7 +341,7 @@ function TaskBlock(props: {
               }}
               onPointerDown={swallow}
               className={[
-                iconBtnClass,
+                iconBtnDesktopClass,
                 props.childCount && props.childCount > 0 ? "w-auto px-1 gap-0.5" : "",
               ].join(" ")}
               aria-label={
@@ -368,7 +375,7 @@ function TaskBlock(props: {
               rel="noopener noreferrer"
               onClick={swallow}
               onPointerDown={swallow}
-              className={iconBtnClass}
+              className={iconBtnDesktopClass}
               aria-label="Add to Google Calendar"
               title="Add to Google Calendar"
             >
@@ -380,7 +387,7 @@ function TaskBlock(props: {
               type="button"
               onClick={() => props.onDuplicate?.(props.task.id)}
               onPointerDown={swallow}
-              className={iconBtnClass}
+              className={iconBtnDesktopClass}
               aria-label="Duplicate task"
               title="Duplicate"
             >
@@ -391,7 +398,7 @@ function TaskBlock(props: {
             type="button"
             onClick={() => props.onDelete(props.task.id)}
             onPointerDown={swallow}
-            className={[iconBtnClass, "hover:text-rose-700 hover:bg-rose-50"].join(" ")}
+            className={[iconBtnDesktopClass, "hover:text-rose-700 hover:bg-rose-50"].join(" ")}
             aria-label="Delete task"
             title="Delete"
           >
@@ -451,6 +458,22 @@ function TaskBlock(props: {
           </div>
         ) : null}
       </div>
+      {/* Chunky finger-sized resize handle — shown when the block is selected
+          on touch. Lives outside the overflow-hidden card so it can hang below
+          the block edge. */}
+      {props.selected && !props.minutesReadOnly ? (
+        <div
+          onPointerDown={onResizeStart}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeEnd}
+          onPointerCancel={onResizeEnd}
+          className="md:hidden absolute left-1/2 -translate-x-1/2 -bottom-4 z-40 flex h-8 w-24 cursor-ns-resize items-center justify-center rounded-full border border-line bg-white shadow-soft"
+          style={{ touchAction: "none" }}
+          aria-label="Resize task duration"
+        >
+          <div className="h-1 w-10 rounded-full bg-ink/25" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -473,6 +496,8 @@ export function TaskCanvas(props: {
   childCountById?: Record<string, number>;
   minutesOverrideById?: Record<string, number>;
   minutesReadOnlyById?: Record<string, boolean>;
+  selectedId?: string | null;
+  onSelect?: (id: string | null) => void;
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -580,7 +605,10 @@ export function TaskCanvas(props: {
       // reach off-screen times on a tall mobile canvas.
       autoScroll={{ threshold: { x: 0, y: 0.15 } }}
       modifiers={[snapToSlotModifier]}
-      onDragStart={() => setPendingCreate(null)}
+      onDragStart={(e) => {
+        setPendingCreate(null);
+        props.onSelect?.(String(e.active.id));
+      }}
       onDragEnd={(e) => {
         const task = topLevel.find((t) => t.id === String(e.active.id));
         if (!task || task.scheduledStartMinutes == null) return;
@@ -641,6 +669,7 @@ export function TaskCanvas(props: {
             const yOffset = e.clientY - rect.top;
             const clickedMin = effectiveStartMin + yOffset / props.pxPerMinute;
             const snapped = snapToCanvas(clickedMin);
+            props.onSelect?.(null);
             if (coarsePointer) {
               // Two-tap create on touch: first tap places/moves the ghost,
               // tapping the ghost confirms.
@@ -740,6 +769,8 @@ export function TaskCanvas(props: {
                 minutesOverride={props.minutesOverrideById?.[t.id]}
                 maxMinutes={maxMinutes}
                 canvasStartMin={effectiveStartMin}
+                selected={props.selectedId === t.id}
+                onSelect={() => props.onSelect?.(t.id)}
               />
             );
           })}

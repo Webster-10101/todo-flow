@@ -68,6 +68,14 @@ function XIcon() {
   );
 }
 
+function PlayIcon() {
+  return (
+    <svg {...iconProps} fill="currentColor" stroke="none">
+      <path d="M5 3.2v9.6a.6.6 0 0 0 .92.5l7.3-4.8a.6.6 0 0 0 0-1l-7.3-4.8A.6.6 0 0 0 5 3.2z" />
+    </svg>
+  );
+}
+
 function PencilIcon() {
   return (
     <svg {...iconProps}>
@@ -118,6 +126,7 @@ export function BlockActionBar(props: {
   onToLater: (id: string) => void;
   onOpenSubtasks: (id: string, anchor: DOMRect) => void;
   onRename: (id: string) => void;
+  onStart: (id: string) => void;
 }) {
   const t = props.task;
   const isBreak = t.kind === "break";
@@ -149,6 +158,11 @@ export function BlockActionBar(props: {
         </button>
       </div>
       <div className="mt-1 flex items-stretch gap-1">
+        {!done ? (
+          <ActionButton label="Start" onClick={() => props.onStart(t.id)}>
+            <PlayIcon />
+          </ActionButton>
+        ) : null}
         <ActionButton
           label={done ? "Undo" : "Done"}
           onClick={() => props.onToggleDone(t.id)}

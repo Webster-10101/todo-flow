@@ -2,6 +2,18 @@
 
 Generated from `changelog.json` — edit that, not this file.
 
+## 1.2.0 — 2026-07-27
+
+_Start any task from its own block_
+
+### Added
+
+- A play button on each block starts that task directly, instead of always starting the sprint from the top. On touch it's the Start button in the action bar. Whatever was running goes back in the queue rather than being lost.
+
+### Changed
+
+- The menu bar now shows the task name alongside the countdown, so you can tell what's running without opening the window.
+
 ## 1.1.0 — 2026-07-27
 
 _A Mac app with a menu bar timer, pomodoro defaults, and blocks you can actually grab_

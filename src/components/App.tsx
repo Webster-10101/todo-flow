@@ -390,6 +390,7 @@ export function App() {
             onScheduleToSprint={actions.scheduleToSprint}
             onStartFreshDay={handleStartFreshDay}
             onOpenExport={() => setExportOpen(true)}
+            onStartTask={actions.startTask}
           />
         )}
       </div>

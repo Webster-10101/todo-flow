@@ -146,11 +146,17 @@ function createWindow() {
     console.log(`[todoflow] loaded ${win.webContents.getURL()}`);
     // Smoke check for `npm run desktop:verify`: prove the app actually mounted
     // rather than serving a bare HTML shell with 404'd chunks, then exit.
-    if (process.env.TODOFLOW_VERIFY) {
+    // TODOFLOW_VERIFY=1 runs the default probe; any other value is evaluated as
+    // an expression in the renderer, which makes one-off UI checks cheap.
+    const verify = process.env.TODOFLOW_VERIFY;
+    if (verify) {
+      const expression =
+        verify === "1" ? "document.querySelectorAll('button').length + ' buttons'" : verify;
       win.webContents
-        .executeJavaScript("document.querySelectorAll('button').length")
-        .then((count) => {
-          console.log(`[todoflow] verify: ${count} buttons rendered`);
+        .executeJavaScript(expression)
+        .then((result) => console.log(`[todoflow] verify: ${result}`))
+        .catch((err) => console.error(`[todoflow] verify failed: ${err.message}`))
+        .finally(() => {
           isQuitting = true;
           app.quit();
         });
@@ -196,21 +202,35 @@ function formatCountdown(ms) {
   return `${pad2(Math.floor(total / 60))}:${pad2(total % 60)}`;
 }
 
-// What the menu bar reads. Deliberately terse — it sits next to the clock.
-function trayTitle() {
-  if (!timer.running) return "⏱";
-  if (timer.paused) {
-    return `⏸ ${formatCountdown(timer.remainingMs ?? 0)}`;
-  }
-  if (timer.endMs == null) return "⏱";
-  const remaining = timer.endMs - Date.now();
-  if (remaining <= 0) return "⏱ done";
-  return `⏱ ${formatCountdown(remaining)}`;
-}
-
 function truncate(s, max) {
   if (!s) return "";
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+// Menu bar items compete with everything else up there, so the task title is
+// clipped hard. Long enough to tell two tasks apart, short enough not to shove
+// the clock off a laptop screen.
+const TRAY_TITLE_MAX = 22;
+
+// What the menu bar reads: "⏱ Silversea voyages · 24:31". Title first (it's the
+// context), countdown last (it's the bit that changes).
+function trayTitle() {
+  if (!timer.running) return "⏱";
+
+  const label = truncate(timer.title, TRAY_TITLE_MAX);
+  const prefix = timer.paused ? "⏸" : "⏱";
+
+  let time;
+  if (timer.paused) {
+    time = formatCountdown(timer.remainingMs ?? 0);
+  } else if (timer.endMs == null) {
+    return label ? `${prefix} ${label}` : prefix;
+  } else {
+    const remaining = timer.endMs - Date.now();
+    time = remaining <= 0 ? "done" : formatCountdown(remaining);
+  }
+
+  return label ? `${prefix} ${label} · ${time}` : `${prefix} ${time}`;
 }
 
 function send(command) {
@@ -258,8 +278,10 @@ function buildTrayMenu() {
 
 function refreshTray() {
   if (!tray) return;
-  tray.setTitle(trayTitle());
+  const title = trayTitle();
+  tray.setTitle(title);
   tray.setContextMenu(buildTrayMenu());
+  if (process.env.TODOFLOW_VERIFY) console.log(`[todoflow] tray: "${title}"`);
 }
 
 function createTray() {

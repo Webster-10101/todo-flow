@@ -53,6 +53,7 @@ export type Action =
   | { type: "INSERT_BREAK_PLAN"; payload: InsertBreakPayload }
   | { type: "INSERT_BREAK_NEXT"; payload: InsertBreakPayload }
   | { type: "START_SPRINT"; nowMs: number }
+  | { type: "START_TASK"; id: string; nowMs: number }
   | { type: "START_NEXT"; nowMs: number }
   | { type: "COMPLETE_ACTIVE"; nowMs: number }
   | { type: "DELETE_ACTIVE"; nowMs: number }
@@ -779,6 +780,39 @@ export function reducer(state: State, action: Action): State {
           ...initialState.runner,
           mode: "run",
           activeTaskId: firstId,
+          activeStartedAt: action.nowMs,
+        },
+      };
+    }
+
+    // Start one specific task, rather than whatever comes first in the sprint.
+    // Same end state as START_SPRINT — it just picks the target explicitly.
+    case "START_TASK": {
+      const target = state.tasks.find((t) => t.id === action.id);
+      if (!target || target.status === "done") return state;
+
+      // Starting a parent means starting its first unfinished subtask, the same
+      // rule getNextStepId uses — the runner should never sit on a task whose
+      // real work lives in its children.
+      const kids = state.tasks.filter(
+        (t) => t.parentId === target.id && t.status !== "done",
+      );
+      const startId = kids.length ? (kids.find((k) => k.status === "queued") ?? kids[0]).id : target.id;
+
+      const next = state.tasks.map((t) => {
+        if (t.id === startId) return touch({ ...t, status: "active" as const }, action.nowMs);
+        // Whatever was running gets put back in the queue, not lost.
+        if (t.status === "active") return touch({ ...t, status: "queued" as const }, action.nowMs);
+        return t;
+      });
+
+      return {
+        ...state,
+        tasks: normalizeTasks(next),
+        runner: {
+          ...initialState.runner,
+          mode: "run",
+          activeTaskId: startId,
           activeStartedAt: action.nowMs,
         },
       };

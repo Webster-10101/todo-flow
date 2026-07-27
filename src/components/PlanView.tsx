@@ -42,6 +42,7 @@ export function PlanView(props: {
   onScheduleToSprint: (id: string) => void;
   onStartFreshDay: () => void;
   onOpenExport: () => void;
+  onStartTask: (id: string) => void;
 }) {
   const [newTitle, setNewTitle] = useState("");
   const [newMinutes, setNewMinutes] = useState(props.settings.defaultTaskMinutes);
@@ -364,6 +365,7 @@ export function PlanView(props: {
           onDelete={props.onDelete}
           onToggleInSprint={props.onToggleInSprint}
           onDuplicate={props.onDuplicate}
+          onStart={props.onStartTask}
           childCountById={childCountById}
           minutesOverrideById={minutesOverrideById}
           minutesReadOnlyById={minutesReadOnlyById}
@@ -520,6 +522,10 @@ export function PlanView(props: {
                 setSubtaskPopover({ parentId: id, anchor })
               }
               onRename={(id) => setRenamingId(id)}
+              onStart={(id) => {
+                setSelectedId(null);
+                props.onStartTask(id);
+              }}
             />
           ) : null
         }

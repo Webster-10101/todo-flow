@@ -223,6 +223,7 @@ export function useTodoFlow() {
           payload: { id: uid(), minutes, nowMs: Date.now() },
         }),
       startSprint: () => dispatch({ type: "START_SPRINT", nowMs: Date.now() }),
+      startTask: (id: string) => dispatch({ type: "START_TASK", id, nowMs: Date.now() }),
       startNext: () => dispatch({ type: "START_NEXT", nowMs: Date.now() }),
       completeActive: () => dispatch({ type: "COMPLETE_ACTIVE", nowMs: Date.now() }),
       deleteActive: () => dispatch({ type: "DELETE_ACTIVE", nowMs: Date.now() }),

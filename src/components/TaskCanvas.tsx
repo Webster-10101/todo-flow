@@ -70,6 +70,14 @@ function CheckIcon() {
   );
 }
 
+function PlayIcon() {
+  return (
+    <svg {...iconProps} fill="currentColor" stroke="none">
+      <path d="M5 3.2v9.6a.6.6 0 0 0 .92.5l7.3-4.8a.6.6 0 0 0 0-1l-7.3-4.8A.6.6 0 0 0 5 3.2z" />
+    </svg>
+  );
+}
+
 function CalendarIcon() {
   return (
     <svg {...iconProps}>
@@ -158,6 +166,7 @@ function TaskBlock(props: {
   onDelete: (id: string) => void;
   onOpenSubtasks?: (parentId: string, anchor: DOMRect) => void;
   onDuplicate?: (id: string) => void;
+  onStart?: (id: string) => void;
   hasChildren: boolean;
   childCount?: number;
   minutesReadOnly?: boolean;
@@ -401,6 +410,21 @@ function TaskBlock(props: {
               {props.task.title || (isBreak ? "Break" : "Task")}
             </div>
           )}
+          {props.onStart && props.task.status === "queued" ? (
+            <button
+              type="button"
+              onClick={() => props.onStart?.(props.task.id)}
+              onPointerDown={swallow}
+              className={[
+                iconBtnDesktopClass,
+                "text-teal-700 hover:text-teal-800 hover:bg-teal-50",
+              ].join(" ")}
+              aria-label="Start this task now"
+              title="Start now"
+            >
+              <PlayIcon />
+            </button>
+          ) : null}
           {props.onOpenSubtasks && !isBreak ? (
             <button
               type="button"
@@ -564,6 +588,7 @@ export function TaskCanvas(props: {
   onDelete: (id: string) => void;
   onToggleInSprint?: (id: string) => void;
   onDuplicate?: (id: string) => void;
+  onStart?: (id: string) => void;
   onOpenSubtasks?: (parentId: string, anchor: DOMRect) => void;
   childCountById?: Record<string, number>;
   minutesOverrideById?: Record<string, number>;
@@ -893,6 +918,7 @@ export function TaskCanvas(props: {
                 onDelete={props.onDelete}
                 onOpenSubtasks={props.onOpenSubtasks}
                 onDuplicate={props.onDuplicate}
+                onStart={props.onStart}
                 hasChildren={Boolean(props.minutesReadOnlyById?.[t.id])}
                 childCount={props.childCountById?.[t.id]}
                 minutesReadOnly={props.minutesReadOnlyById?.[t.id]}

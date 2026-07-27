@@ -45,6 +45,11 @@ create table public.user_settings (
   user_id uuid primary key default auth.uid() references auth.users (id) on delete cascade,
   latest_finish_minutes int not null,
   scheduled_start_minutes int,
+  -- Pomodoro rhythm. Defaults match the client's so a row written by an older
+  -- build still reads back sensibly.
+  default_task_minutes int not null default 25,
+  default_break_minutes int not null default 5,
+  auto_break boolean not null default true,
   updated_at_ms bigint not null
 );
 

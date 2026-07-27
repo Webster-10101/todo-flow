@@ -12,7 +12,7 @@ import {
 } from "@/src/lib/time";
 import { useGridPxPerMin } from "@/src/lib/layout";
 import { todayLocalISO } from "@/src/lib/dates";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { TaskCanvas } from "./TaskCanvas";
 import { TaskRow } from "./TaskRow";
 import { SubtasksPopover } from "./SubtasksPopover";
@@ -44,7 +44,7 @@ export function PlanView(props: {
   onOpenExport: () => void;
 }) {
   const [newTitle, setNewTitle] = useState("");
-  const [newMinutes, setNewMinutes] = useState(25);
+  const [newMinutes, setNewMinutes] = useState(props.settings.defaultTaskMinutes);
   const [subtaskPopover, setSubtaskPopover] = useState<{
     parentId: string;
     anchor: DOMRect;
@@ -52,6 +52,10 @@ export function PlanView(props: {
   // Selected canvas block — drives the mobile BlockActionBar + chunky resize
   // handle. Selection is harmless on desktop (just a ring).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Touch rename request — the action bar sets it, the canvas block consumes it
+  // and clears it. Desktop just double-clicks the title instead.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const clearRenaming = useCallback(() => setRenamingId(null), []);
   const canAdd = newTitle.trim().length > 0;
   const pxPerMin = useGridPxPerMin();
 
@@ -349,6 +353,7 @@ export function PlanView(props: {
           schedule={canvasSchedule}
           pxPerMinute={pxPerMin}
           now={props.now}
+          createMinutes={props.settings.defaultTaskMinutes}
           onSetTaskTime={props.onSetTaskTime}
           onCreateTaskAtTime={props.onAddTaskAtTime}
           onOpenSubtasks={(parentId, anchor) => setSubtaskPopover({ parentId, anchor })}
@@ -364,6 +369,8 @@ export function PlanView(props: {
           minutesReadOnlyById={minutesReadOnlyById}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          renamingId={renamingId}
+          onRenameHandled={clearRenaming}
         />
       </div>
 
@@ -482,6 +489,7 @@ export function PlanView(props: {
 
       <MobileDock
         queuedCount={queuedSprint.length}
+        defaultMinutes={props.settings.defaultTaskMinutes}
         onAddTask={props.onAddTask}
         onInsertBreak={props.onInsertBreak}
         onStartSprint={props.onStartSprint}
@@ -511,6 +519,7 @@ export function PlanView(props: {
               onOpenSubtasks={(id, anchor) =>
                 setSubtaskPopover({ parentId: id, anchor })
               }
+              onRename={(id) => setRenamingId(id)}
             />
           ) : null
         }

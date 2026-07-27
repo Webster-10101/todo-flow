@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTodoFlow } from "@/src/lib/useTodoFlow";
 import {
   formatClock,
@@ -20,6 +20,12 @@ import { RunView } from "./RunView";
 import { Toast } from "./Toast";
 import { CompletionView } from "./CompletionView";
 import { ExportModal } from "./ExportModal";
+import { PomodoroSettings } from "./PomodoroSettings";
+import { WhatsNewModal } from "./WhatsNewModal";
+import { isNewerVersion } from "@/src/lib/changelog";
+import { APP_VERSION, BUILD_SHA, LAST_SEEN_VERSION_KEY } from "@/src/lib/version";
+import { useDesktopTray, type DesktopCommand } from "@/src/lib/useDesktopTray";
+import { useDesktopDaySnapshot } from "@/src/lib/useDesktopDaySnapshot";
 import confetti from "canvas-confetti";
 
 export function App() {
@@ -44,7 +50,61 @@ export function App() {
   // projected-finish pill to keep the canvas above the fold.
   const [daySettingsOpen, setDaySettingsOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [hasUnseenRelease, setHasUnseenRelease] = useState(false);
   const { user } = useSupabaseAuth();
+
+  // Dot on the version chip when this build is newer than the last changelog
+  // the user opened. A device with no record is a fresh install, not someone
+  // behind — stamp it and stay quiet.
+  useEffect(() => {
+    try {
+      const seen = window.localStorage.getItem(LAST_SEEN_VERSION_KEY);
+      if (!seen) {
+        window.localStorage.setItem(LAST_SEEN_VERSION_KEY, APP_VERSION);
+        return;
+      }
+      setHasUnseenRelease(isNewerVersion(APP_VERSION, seen));
+    } catch {
+      // private mode / storage disabled — no dot, no harm
+    }
+  }, []);
+
+  // macOS menu bar countdown. Commands come back as the same actions the UI
+  // calls, so the tray can't drift into its own idea of the timer.
+  const handleTrayCommand = useCallback(
+    (command: DesktopCommand) => {
+      switch (command) {
+        case "pause":
+        case "resume":
+          actions.togglePause();
+          break;
+        case "done":
+          actions.completeActive();
+          break;
+        case "extend5":
+          actions.extendActive(5);
+          break;
+        case "start":
+          if (runner.mode === "run") actions.startNext();
+          else actions.startSprint();
+          break;
+      }
+    },
+    [actions, runner.mode],
+  );
+  useDesktopTray({ tasks, runner, onCommand: handleTrayCommand });
+  useDesktopDaySnapshot({ tasks, now });
+
+  function openWhatsNew() {
+    setWhatsNewOpen(true);
+    setHasUnseenRelease(false);
+    try {
+      window.localStorage.setItem(LAST_SEEN_VERSION_KEY, APP_VERSION);
+    } catch {
+      // nothing to do
+    }
+  }
 
   function handleStartFreshDay() {
     const doneCount = tasks.filter((t) => t.status === "done").length;
@@ -112,7 +172,25 @@ export function App() {
               <span className="mx-2 text-muted">·</span>
               TodoFlow
             </div>
-            <div className="mt-0 md:mt-1 text-2xl md:text-4xl text-ink tracking-tight">Todo Flow</div>
+            <div className="mt-0 md:mt-1 flex items-center justify-center md:justify-start gap-2">
+              <span className="text-2xl md:text-4xl text-ink tracking-tight">Todo Flow</span>
+              <button
+                type="button"
+                onClick={openWhatsNew}
+                className="relative self-center rounded-full border border-line bg-white/70 px-2 py-0.5 text-[11px] tabular-nums text-muted hover:text-ink hover:bg-soft transition-colors"
+                aria-label={`Version ${APP_VERSION} — what's new`}
+                title="What's new"
+              >
+                v{APP_VERSION}
+                {BUILD_SHA ? <span className="opacity-60"> · {BUILD_SHA}</span> : null}
+                {hasUnseenRelease ? (
+                  <span
+                    aria-hidden
+                    className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-teal-600 ring-2 ring-paper"
+                  />
+                ) : null}
+              </button>
+            </div>
             <div className="mt-1.5 flex justify-center md:justify-start">
               <StreakDots tasks={tasks} />
             </div>
@@ -175,6 +253,15 @@ export function App() {
                 </label>
               </div>
             ) : null}
+            {daySettingsOpen ? (
+              <div className="md:hidden mt-2 flex justify-center">
+                <PomodoroSettings
+                  settings={settings}
+                  onChange={actions.setPomodoro}
+                  idPrefix="mobile"
+                />
+              </div>
+            ) : null}
           </div>
 
           <div className="hidden md:grid grid-cols-2 md:grid-cols-4 gap-3 rounded-xl border border-line bg-white/70 px-4 py-3 shadow-soft backdrop-blur">
@@ -232,6 +319,13 @@ export function App() {
                   className="w-[120px] rounded-lg border border-line bg-white/80 px-2 py-1 text-sm text-ink outline-none focus:ring-2 focus:ring-[rgba(20,20,20,0.10)]"
                 />
               </div>
+            </div>
+            <div className="col-span-2 md:col-span-4 border-t border-line/60 pt-3">
+              <PomodoroSettings
+                settings={settings}
+                onChange={actions.setPomodoro}
+                idPrefix="desktop"
+              />
             </div>
           </div>
         </header>
@@ -301,6 +395,7 @@ export function App() {
       </div>
 
       <ExportModal open={exportOpen} tasks={tasks} onClose={() => setExportOpen(false)} />
+      <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
       <AuthSheet open={authOpen} user={user} onClose={() => setAuthOpen(false)} />
 
       <Toast message={praise ?? "Marked done"} visible={toast.on} stackIndex={0} />

@@ -53,7 +53,16 @@ export type Settings = {
   latestFinishMinutes: number;
   // Optional scheduled day-start time; null = "start now"
   scheduledStartMinutes: number | null;
+  // Pomodoro rhythm. New tasks get defaultTaskMinutes, and when autoBreak is on
+  // a break of defaultBreakMinutes is placed directly after them — visible on
+  // the canvas, so the projected finish accounts for the breaks you'll take.
+  defaultTaskMinutes: number;
+  defaultBreakMinutes: number;
+  autoBreak: boolean;
 };
+
+export const DEFAULT_TASK_MINUTES = 25;
+export const DEFAULT_BREAK_MINUTES = 5;
 
 // v1 tasks predate date/position/updatedAtMs — loadState() migrates them.
 export type PersistedTaskV1 = Omit<Task, "date" | "position" | "updatedAtMs">;

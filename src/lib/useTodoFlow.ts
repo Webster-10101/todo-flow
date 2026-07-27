@@ -7,7 +7,9 @@ import {
   getNextStepId,
   type Action,
 } from "./todoflowReducer";
-import { loadState, saveState } from "./storage";
+import { loadMirroredState, loadState, saveState } from "./storage";
+import { isNative } from "./platform";
+import type { Settings } from "./types";
 import { uid } from "./ids";
 import { useInterval } from "./useInterval";
 import { useSync } from "./sync/useSync";
@@ -18,6 +20,18 @@ import {
   isProjectedPastCutoff,
 } from "./time";
 
+export type PomodoroPatch = Partial<
+  Pick<Settings, "defaultTaskMinutes" | "defaultBreakMinutes" | "autoBreak">
+>;
+
+// The break half of an ADD_TASK payload. Spread in, so autoBreak: false simply
+// omits the fields and the reducer places no break.
+function autoBreakPayload(settings: Settings) {
+  if (!settings.autoBreak) return {};
+  if (settings.defaultBreakMinutes <= 0) return {};
+  return { breakId: uid(), breakMinutes: settings.defaultBreakMinutes };
+}
+
 export function useTodoFlow() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [hydrated, setHydrated] = useState(false);
@@ -26,10 +40,14 @@ export function useTodoFlow() {
 
   useInterval(() => setNowMs(Date.now()), 1000);
 
-  // Hydrate from localStorage
+  // Hydrate from localStorage, falling back to the native mirror. On iOS,
+  // WKWebView can evict localStorage under storage pressure — the mirror is
+  // the copy that survives, so an empty read is a "check the mirror" signal,
+  // not proof there's nothing to load.
   useEffect(() => {
-    const loaded = loadState();
-    if (loaded) {
+    let cancelled = false;
+
+    function applyLoaded(loaded: NonNullable<ReturnType<typeof loadState>>) {
       const coercedTasks = loaded.tasks.map((t) => {
         if (loaded.runner.activeTaskId && t.id === loaded.runner.activeTaskId) {
           return t.status === "done" ? t : { ...t, status: "active" as const };
@@ -44,7 +62,28 @@ export function useTodoFlow() {
         nowMs: Date.now(),
       });
     }
-    setHydrated(true);
+
+    const loaded = loadState();
+    if (loaded) {
+      applyLoaded(loaded);
+      setHydrated(true);
+      return;
+    }
+
+    if (!isNative()) {
+      setHydrated(true);
+      return;
+    }
+
+    void loadMirroredState().then((mirrored) => {
+      if (cancelled) return;
+      if (mirrored) applyLoaded(mirrored);
+      setHydrated(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Latest state ref — used by flush handlers and the duplicate action creator
@@ -110,22 +149,33 @@ export function useTodoFlow() {
 
   const actions = useMemo(
     () => ({
-      addTask: (title: string, minutes: number) =>
+      addTask: (title: string, minutes?: number) => {
+        const s = latestStateRef.current.settings;
         dispatch({
           type: "ADD_TASK",
-          payload: { id: uid(), title, minutes, nowMs: Date.now() },
-        }),
-      addTaskAtTime: (scheduledStartMinutes: number, minutes = 50) =>
+          payload: {
+            id: uid(),
+            title,
+            minutes: minutes ?? s.defaultTaskMinutes,
+            nowMs: Date.now(),
+            ...autoBreakPayload(s),
+          },
+        });
+      },
+      addTaskAtTime: (scheduledStartMinutes: number, minutes?: number) => {
+        const s = latestStateRef.current.settings;
         dispatch({
           type: "ADD_TASK",
           payload: {
             id: uid(),
             title: "",
-            minutes,
+            minutes: minutes ?? s.defaultTaskMinutes,
             nowMs: Date.now(),
             scheduledStartMinutes,
+            ...autoBreakPayload(s),
           },
-        }),
+        });
+      },
       addSubtask: (parentId: string, title: string, minutes: number) =>
         dispatch({
           type: "ADD_SUBTASK",
@@ -187,6 +237,7 @@ export function useTodoFlow() {
         dispatch({ type: "SET_LATEST_FINISH", minutes }),
       setScheduledStart: (minutes: number | null) =>
         dispatch({ type: "SET_SCHEDULED_START", minutes }),
+      setPomodoro: (patch: PomodoroPatch) => dispatch({ type: "SET_POMODORO", patch }),
       startFreshDay: () => dispatch({ type: "START_FRESH_DAY" }),
       undoDelete: () => dispatch({ type: "UNDO_DELETE", nowMs: Date.now() }),
     }),

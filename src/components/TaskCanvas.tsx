@@ -87,8 +87,6 @@ const iconBtnClass =
 // (tap a block to select it), so the tiny inline icons stay hidden.
 const iconBtnDesktopClass = `${iconBtnClass} hidden md:inline-flex`;
 
-// Matches the default minutes in useTodoFlow.addTaskAtTime — keep in sync.
-const GRID_CREATE_MINUTES = 50;
 
 // Touch devices get a two-tap create (ghost block + confirm) instead of
 // instant create-on-tap, so scroll/mis-taps don't spawn empty tasks.
@@ -168,6 +166,8 @@ function TaskBlock(props: {
   canvasStartMin: number;
   selected?: boolean;
   onSelect?: () => void;
+  renameRequested?: boolean;
+  onRenameHandled?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: props.task.id,
@@ -202,6 +202,29 @@ function TaskBlock(props: {
       setMinutesDraft(String(displayMinutes));
     }
   };
+
+  // Title editing is opt-in. The title used to be an always-live <input> that
+  // swallowed pointerdown so it wouldn't start a drag — which meant grabbing a
+  // block by its title (the obvious place to grab it) only ever put a cursor in
+  // the text. Now it renders as plain text inside the draggable surface and you
+  // double-click to edit. Freshly created blocks still open straight into edit.
+  const [editingTitle, setEditingTitle] = useState(props.task.title === "");
+  // Snapshot for Escape-to-revert. Edits still dispatch on every keystroke (as
+  // before), so nothing is lost if the block unmounts mid-edit.
+  const titleBeforeEditRef = useRef(props.task.title);
+  const startEditingTitle = () => {
+    titleBeforeEditRef.current = props.task.title;
+    setEditingTitle(true);
+  };
+
+  // Touch has no double-click — the BlockActionBar's Rename button asks for it.
+  const { renameRequested, onRenameHandled } = props;
+  useEffect(() => {
+    if (!renameRequested) return;
+    startEditingTitle();
+    onRenameHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renameRequested, onRenameHandled]);
 
   const startMin = props.task.scheduledStartMinutes ?? props.canvasStartMin;
   const topPx = (startMin - props.canvasStartMin) * props.pxPerMinute;
@@ -337,19 +360,47 @@ function TaskBlock(props: {
           >
             {muted ? <CheckIcon /> : props.hasChildren ? <span className="text-[10px] leading-none">·</span> : null}
           </button>
-          <input
-            value={props.task.title}
-            onChange={(e) => props.onEditTitle(props.task.id, e.target.value)}
-            onPointerDown={swallow}
-            placeholder={isBreak ? "Break" : "Task"}
-            aria-label="Task title"
-            autoFocus={props.task.title === ""}
-            className={[
-              "flex-1 min-w-0 bg-transparent outline-none truncate ml-0.5",
-              "text-[13px] sm:text-sm font-medium tracking-tight text-ink/90",
-              muted ? "line-through decoration-[rgba(20,20,20,0.25)]" : "",
-            ].join(" ")}
-          />
+          {editingTitle ? (
+            <input
+              value={props.task.title}
+              onChange={(e) => props.onEditTitle(props.task.id, e.target.value)}
+              onPointerDown={swallow}
+              onBlur={() => setEditingTitle(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  props.onEditTitle(props.task.id, titleBeforeEditRef.current);
+                  e.currentTarget.blur();
+                }
+              }}
+              onFocus={(e) => e.currentTarget.select()}
+              placeholder={isBreak ? "Break" : "Task"}
+              aria-label="Task title"
+              autoFocus
+              className={[
+                "flex-1 min-w-0 bg-transparent outline-none truncate ml-0.5",
+                "text-[13px] sm:text-sm font-medium tracking-tight text-ink/90",
+                muted ? "line-through decoration-[rgba(20,20,20,0.25)]" : "",
+              ].join(" ")}
+            />
+          ) : (
+            // No pointer swallow here — that's the whole point: a drag can
+            // start on the title like anywhere else on the block.
+            <div
+              onDoubleClick={startEditingTitle}
+              title="Double-click to rename"
+              className={[
+                "flex-1 min-w-0 truncate ml-0.5 select-none",
+                "text-[13px] sm:text-sm font-medium tracking-tight",
+                props.task.title ? "text-ink/90" : "text-muted/70",
+                muted ? "line-through decoration-[rgba(20,20,20,0.25)]" : "",
+              ].join(" ")}
+            >
+              {props.task.title || (isBreak ? "Break" : "Task")}
+            </div>
+          )}
           {props.onOpenSubtasks && !isBreak ? (
             <button
               type="button"
@@ -501,6 +552,9 @@ export function TaskCanvas(props: {
   schedule: SprintSchedule;
   pxPerMinute: number;
   now: Date;
+  // Duration a click-to-create block gets — settings.defaultTaskMinutes, so the
+  // hover ghost previews the same length the task will actually be.
+  createMinutes: number;
   onSetTaskTime: (id: string, minutes: number) => void;
   onCreateTaskAtTime: (scheduledStartMinutes: number) => void;
   onEditTitle: (id: string, title: string) => void;
@@ -516,6 +570,10 @@ export function TaskCanvas(props: {
   minutesReadOnlyById?: Record<string, boolean>;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
+  // Set by the touch action bar's Rename button — opens that block's title
+  // for editing, since touch has no double-click.
+  renamingId?: string | null;
+  onRenameHandled?: () => void;
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -742,12 +800,12 @@ export function TaskCanvas(props: {
               style={{
                 top: (hoverStart - effectiveStartMin) * props.pxPerMinute,
                 height:
-                  Math.min(GRID_CREATE_MINUTES, CANVAS_END_MIN - hoverStart) *
+                  Math.min(props.createMinutes, CANVAS_END_MIN - hoverStart) *
                   props.pxPerMinute,
               }}
             >
               <div className="absolute left-2 top-1 text-[11px] text-muted/70 tabular-nums">
-                {formatMinutesOfDay(hoverStart)} · {GRID_CREATE_MINUTES} min
+                {formatMinutesOfDay(hoverStart)} · {props.createMinutes} min
               </div>
             </div>
           ) : null}
@@ -757,7 +815,7 @@ export function TaskCanvas(props: {
               className="absolute inset-x-1 z-20 rounded-lg border-2 border-dashed border-ink/30 bg-white/70 backdrop-blur-[2px] flex items-center justify-center"
               style={{
                 top: (pendingCreate - effectiveStartMin) * props.pxPerMinute,
-                height: GRID_CREATE_MINUTES * props.pxPerMinute,
+                height: props.createMinutes * props.pxPerMinute,
               }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -769,7 +827,7 @@ export function TaskCanvas(props: {
                 }}
                 className="rounded-full border border-line bg-white px-4 py-2 text-sm text-ink shadow-soft"
               >
-                Add {GRID_CREATE_MINUTES} min at {formatMinutesOfDay(pendingCreate)}
+                Add {props.createMinutes} min at {formatMinutesOfDay(pendingCreate)}
               </button>
               <button
                 type="button"
@@ -843,6 +901,8 @@ export function TaskCanvas(props: {
                 canvasStartMin={effectiveStartMin}
                 selected={props.selectedId === t.id}
                 onSelect={() => props.onSelect?.(t.id)}
+                renameRequested={props.renamingId === t.id}
+                onRenameHandled={props.onRenameHandled}
               />
             );
           })}

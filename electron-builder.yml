@@ -1,0 +1,26 @@
+appId: com.alistairwebster.todoflow
+productName: TodoFlow
+
+directories:
+  output: dist-desktop
+  buildResources: assets
+
+# The renderer is the same static export web and iOS get — no separate build.
+files:
+  - electron/**/*
+  - out/**/*
+  - package.json
+
+mac:
+  # `dir` produces TodoFlow.app straight into dist-desktop/ with no dmg step.
+  # Unsigned is fine for personal use; signing + notarisation only matter if
+  # this ever ships to anyone else.
+  target: dir
+  category: public.app-category.productivity
+  # Unsigned: this is a personal build. Set an identity (and notarise) only if
+  # it ever needs to run on someone else's Mac.
+  identity: null
+  # The app lives in the menu bar, so it shouldn't hold the Dock hostage when
+  # its window is closed.
+  extendInfo:
+    LSUIElement: false

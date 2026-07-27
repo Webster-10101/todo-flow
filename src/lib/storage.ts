@@ -8,8 +8,9 @@ import type {
   TaskKind,
   TaskStatus,
 } from "./types";
-import { POSITION_GAP } from "./types";
+import { DEFAULT_BREAK_MINUTES, DEFAULT_TASK_MINUTES, POSITION_GAP } from "./types";
 import { todayLocalISO } from "./dates";
+import { readMirroredState, writeMirroredState } from "./platform";
 
 const STORAGE_KEY_V2 = "todoflow:v2";
 // Legacy blob — read once for migration, then left untouched as a rollback
@@ -106,7 +107,13 @@ function isValidSettings(obj: unknown): obj is Settings {
 }
 
 export function getDefaultSettings(): Settings {
-  return { latestFinishMinutes: 18 * 60, scheduledStartMinutes: null };
+  return {
+    latestFinishMinutes: 18 * 60,
+    scheduledStartMinutes: null,
+    defaultTaskMinutes: DEFAULT_TASK_MINUTES,
+    defaultBreakMinutes: DEFAULT_BREAK_MINUTES,
+    autoBreak: true,
+  };
 }
 
 export function getDefaultRunner(): RunnerState {
@@ -134,14 +141,42 @@ function validateRunnerAndSettings(parsed: {
 }): { runner: RunnerState; settings: Settings } {
   const runner =
     parsed.runner && isValidRunnerState(parsed.runner) ? parsed.runner : getDefaultRunner();
-  const settings: Settings =
-    parsed.settings && isValidSettings(parsed.settings)
-      ? {
-          latestFinishMinutes: (parsed.settings as Settings).latestFinishMinutes,
-          scheduledStartMinutes: (parsed.settings as Settings).scheduledStartMinutes ?? null,
-        }
-      : getDefaultSettings();
+  let settings = getDefaultSettings();
+  if (parsed.settings && isValidSettings(parsed.settings)) {
+    const s = parsed.settings as Partial<Settings>;
+    settings = {
+      latestFinishMinutes: s.latestFinishMinutes as number,
+      scheduledStartMinutes: s.scheduledStartMinutes ?? null,
+      // Backfilled: blobs written before the pomodoro settings existed are
+      // still valid (isValidSettings deliberately doesn't require these), so
+      // an upgrading user inherits the 25 + 5 defaults rather than NaN.
+      defaultTaskMinutes:
+        typeof s.defaultTaskMinutes === "number" ? s.defaultTaskMinutes : DEFAULT_TASK_MINUTES,
+      defaultBreakMinutes:
+        typeof s.defaultBreakMinutes === "number" ? s.defaultBreakMinutes : DEFAULT_BREAK_MINUTES,
+      autoBreak: typeof s.autoBreak === "boolean" ? s.autoBreak : true,
+    };
+  }
   return { runner, settings };
+}
+
+// Parse + validate a v2 blob from any source (localStorage or the native
+// mirror). Returns null if it isn't a usable v2 payload.
+export function parseV2(raw: string): PersistedStateV2 | null {
+  const nowMs = Date.now();
+  const today = todayLocalISO();
+  try {
+    const parsed = JSON.parse(raw) as Partial<PersistedStateV2> | null;
+    if (!parsed || parsed.version !== 2) return null;
+    const tasks = Array.isArray(parsed.tasks)
+      ? parsed.tasks
+          .filter(isValidTaskV1)
+          .map((t, i) => (isValidTaskV2(t) ? (t as Task) : migrateTask(t, i, nowMs, today)))
+      : [];
+    return { version: 2, tasks, ...validateRunnerAndSettings(parsed) };
+  } catch {
+    return null;
+  }
 }
 
 export function loadState(): PersistedStateV2 | null {
@@ -153,17 +188,8 @@ export function loadState(): PersistedStateV2 | null {
   try {
     const rawV2 = window.localStorage.getItem(STORAGE_KEY_V2);
     if (rawV2) {
-      const parsed = JSON.parse(rawV2) as Partial<PersistedStateV2> | null;
-      if (parsed && parsed.version === 2) {
-        const tasks = Array.isArray(parsed.tasks)
-          ? parsed.tasks
-              .filter(isValidTaskV1)
-              .map((t, i) =>
-                isValidTaskV2(t) ? (t as Task) : migrateTask(t, i, nowMs, today),
-              )
-          : [];
-        return { version: 2, tasks, ...validateRunnerAndSettings(parsed) };
-      }
+      const parsed = parseV2(rawV2);
+      if (parsed) return parsed;
     }
   } catch {
     // fall through to v1
@@ -189,13 +215,32 @@ export function loadState(): PersistedStateV2 | null {
 
 export function saveState(state: PersistedStateV2): boolean {
   if (typeof window === "undefined") return false;
+  const json = JSON.stringify(state);
+  // Mirror to native storage first — it's the copy that survives WKWebView
+  // evicting localStorage. Fire-and-forget; it must never block the save.
+  void writeMirroredState(json);
   try {
-    window.localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(state));
+    window.localStorage.setItem(STORAGE_KEY_V2, json);
     return true;
   } catch {
     // quota exceeded or private mode
     return false;
   }
+}
+
+// Native fallback: read the UserDefaults mirror when localStorage came back
+// empty. Also re-seeds localStorage so the rest of the app behaves normally.
+export async function loadMirroredState(): Promise<PersistedStateV2 | null> {
+  const raw = await readMirroredState();
+  if (!raw) return null;
+  const parsed = parseV2(raw);
+  if (!parsed) return null;
+  try {
+    window.localStorage.setItem(STORAGE_KEY_V2, raw);
+  } catch {
+    // if localStorage is unwritable we still run from the parsed state
+  }
+  return parsed;
 }
 
 

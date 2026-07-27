@@ -12,10 +12,11 @@ export function MobileDock(props: {
   actionBar: React.ReactNode;
   onAddTask: (title: string, minutes: number) => void;
   onInsertBreak: (minutes: 5 | 10) => void;
+  defaultMinutes: number;
   onStartSprint: () => void;
 }) {
   const [title, setTitle] = useState("");
-  const [minutes, setMinutes] = useState(25);
+  const [minutes, setMinutes] = useState(props.defaultMinutes);
   const [focused, setFocused] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const keyboardInset = useKeyboardInset();

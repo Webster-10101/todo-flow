@@ -8,9 +8,113 @@
 import { Capacitor } from "@capacitor/core";
 import { Haptics, ImpactStyle, NotificationType } from "@capacitor/haptics";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { Preferences } from "@capacitor/preferences";
 
 export function isNative(): boolean {
   return Capacitor.isNativePlatform();
+}
+
+// ---------------------------------------------------------------------------
+// Native storage mirror.
+//
+// WKWebView can evict localStorage under storage pressure — on iOS that means
+// silently losing the user's tasks. Preferences is backed by UserDefaults and
+// isn't evictable, so every save is mirrored there and used as the fallback
+// when localStorage comes back empty on launch. Raw strings only: parsing and
+// validation stay in storage.ts.
+// ---------------------------------------------------------------------------
+
+const MIRROR_KEY = "todoflow_state_v2";
+
+export async function writeMirroredState(json: string): Promise<void> {
+  if (!isNative()) return;
+  try {
+    await Preferences.set({ key: MIRROR_KEY, value: json });
+  } catch {
+    // mirroring is a safety net, never a hard dependency
+  }
+}
+
+export async function readMirroredState(): Promise<string | null> {
+  if (!isNative()) return null;
+  try {
+    const { value } = await Preferences.get({ key: MIRROR_KEY });
+    return value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Desktop (Electron) seam. The preload script sets window.todoflow; on web and
+// iOS it's simply absent and every call below is a no-op.
+// ---------------------------------------------------------------------------
+
+export type TrayTimerState = {
+  running: boolean;
+  title: string;
+  endMs: number | null;
+  paused: boolean;
+  remainingMs: number | null;
+  nextTitle: string | null;
+  canStart: boolean;
+};
+
+export type DaySnapshotBlock = {
+  title: string;
+  kind: "task" | "break";
+  startMinutes: number | null;
+  minutes: number;
+  status: "queued" | "active" | "done";
+  // Best available completion time: the last-modified stamp of a done task.
+  doneAtMs: number | null;
+};
+
+export type DaySnapshot = {
+  date: string;
+  updatedAt: string;
+  focusedMinutes: number;
+  blocks: DaySnapshotBlock[];
+};
+
+type DesktopBridge = {
+  isDesktop: true;
+  publishTimer: (state: TrayTimerState) => void;
+  publishDaySnapshot: (snapshot: DaySnapshot) => void;
+  onCommand: (handler: (command: string) => void) => () => void;
+};
+
+function bridge(): DesktopBridge | null {
+  if (typeof window === "undefined") return null;
+  return (window as unknown as { todoflow?: DesktopBridge }).todoflow ?? null;
+}
+
+export function isDesktop(): boolean {
+  return bridge() !== null;
+}
+
+export function publishTimerState(state: TrayTimerState): void {
+  try {
+    bridge()?.publishTimer(state);
+  } catch {
+    // the menu bar is a nicety — never let it break the app
+  }
+}
+
+export function publishDaySnapshot(snapshot: DaySnapshot): void {
+  try {
+    bridge()?.publishDaySnapshot(snapshot);
+  } catch {
+    // the World HQ feed is best-effort; the app never depends on it
+  }
+}
+
+export function onDesktopCommand<T extends string>(
+  handler: (command: T) => void,
+): (() => void) | undefined {
+  const b = bridge();
+  if (!b) return undefined;
+  return b.onCommand((command) => handler(command as T));
 }
 
 export type HapticKind = "light" | "medium" | "success" | "warning";

@@ -1,4 +1,5 @@
 import type { Settings, Task, TaskKind, TaskStatus } from "../types";
+import { DEFAULT_BREAK_MINUTES, DEFAULT_TASK_MINUTES } from "../types";
 
 // Wire shape of public.tasks (snake_case). user_id is deliberately absent
 // from outbound rows — the column default (auth.uid()) fills it on insert
@@ -24,6 +25,11 @@ export type TaskRow = {
 export type SettingsRow = {
   latest_finish_minutes: number;
   scheduled_start_minutes: number | null;
+  // Optional on read: a row written before these columns existed comes back
+  // without them, and the client falls back to its defaults.
+  default_task_minutes?: number | null;
+  default_break_minutes?: number | null;
+  auto_break?: boolean | null;
   updated_at_ms: number;
 };
 
@@ -74,6 +80,9 @@ export function settingsToRow(s: Settings, nowMs: number): SettingsRow {
   return {
     latest_finish_minutes: s.latestFinishMinutes,
     scheduled_start_minutes: s.scheduledStartMinutes,
+    default_task_minutes: s.defaultTaskMinutes,
+    default_break_minutes: s.defaultBreakMinutes,
+    auto_break: s.autoBreak,
     updated_at_ms: nowMs,
   };
 }
@@ -82,5 +91,8 @@ export function rowToSettings(r: SettingsRow): Settings {
   return {
     latestFinishMinutes: r.latest_finish_minutes,
     scheduledStartMinutes: r.scheduled_start_minutes,
+    defaultTaskMinutes: r.default_task_minutes ?? DEFAULT_TASK_MINUTES,
+    defaultBreakMinutes: r.default_break_minutes ?? DEFAULT_BREAK_MINUTES,
+    autoBreak: r.auto_break ?? true,
   };
 }

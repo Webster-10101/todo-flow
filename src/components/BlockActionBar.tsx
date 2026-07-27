@@ -68,6 +68,14 @@ function XIcon() {
   );
 }
 
+function PencilIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M11 2.5l2.5 2.5M2.5 13.5l.7-2.8 8-8 2.1 2.1-8 8-2.8.7z" />
+    </svg>
+  );
+}
+
 function ActionButton(props: {
   label: string;
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
@@ -109,6 +117,7 @@ export function BlockActionBar(props: {
   onDelete: (id: string) => void;
   onToLater: (id: string) => void;
   onOpenSubtasks: (id: string, anchor: DOMRect) => void;
+  onRename: (id: string) => void;
 }) {
   const t = props.task;
   const isBreak = t.kind === "break";
@@ -146,6 +155,9 @@ export function BlockActionBar(props: {
           disabled={hasKids}
         >
           <CheckIcon />
+        </ActionButton>
+        <ActionButton label="Rename" onClick={() => props.onRename(t.id)}>
+          <PencilIcon />
         </ActionButton>
         {!props.minutesReadOnly ? (
           <>

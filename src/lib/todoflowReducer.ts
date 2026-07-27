@@ -1,7 +1,8 @@
 import type { RunnerState, Settings, Task } from "./types";
-import { POSITION_GAP } from "./types";
+import { DEFAULT_BREAK_MINUTES, DEFAULT_TASK_MINUTES, POSITION_GAP } from "./types";
 import { clampMinutes } from "./ids";
 import { todayLocalISO } from "./dates";
+import { CANVAS_END_MIN } from "./layout";
 
 export type State = {
   tasks: Task[];
@@ -19,6 +20,11 @@ export type AddTaskPayload = {
   // Optional explicit clock-time override (minutes from midnight). Used by
   // click-to-create on the canvas. Falls back to findNextFreeSlot if absent.
   scheduledStartMinutes?: number;
+  // Auto-break: when both are set, a break block of breakMinutes is placed
+  // directly after the new task. Handled inside ADD_TASK rather than as a
+  // second dispatch so it's one undo step and both rows get stamped together.
+  breakId?: string;
+  breakMinutes?: number;
 };
 export type AddSubtaskPayload = { id: string; parentId: string; title: string; minutes: number; nowMs: number };
 export type DuplicatePayload = {
@@ -62,6 +68,12 @@ export type Action =
   | { type: "CLEAR_LAST_DELETION" }
   | { type: "SET_SCHEDULED_START"; minutes: number | null }
   | {
+      type: "SET_POMODORO";
+      patch: Partial<
+        Pick<Settings, "defaultTaskMinutes" | "defaultBreakMinutes" | "autoBreak">
+      >;
+    }
+  | {
       type: "APPLY_REMOTE_TASKS";
       upserts: Task[];
       deletions: Array<{ id: string; deletedAtMs: number }>;
@@ -84,7 +96,13 @@ export const initialState: State = {
     autoStartPausedAt: null,
     autoStartPausedRemainingMs: null,
   },
-  settings: { latestFinishMinutes: 18 * 60, scheduledStartMinutes: null },
+  settings: {
+    latestFinishMinutes: 18 * 60,
+    scheduledStartMinutes: null,
+    defaultTaskMinutes: DEFAULT_TASK_MINUTES,
+    defaultBreakMinutes: DEFAULT_BREAK_MINUTES,
+    autoBreak: true,
+  },
   lastCompletion: null,
   lastDeletion: null,
 };
@@ -146,6 +164,34 @@ export function findNextFreeSlot(args: {
     }
   }
   return candidate;
+}
+
+// Where an auto-break goes after a freshly added task: butted right up against
+// it, deliberately NOT snapped to the 15-min grid — a 25-min task at 09:00 gets
+// its break at 09:25, so the 30-minute cycle lands back on the grid at 09:30.
+// Returns null when a break shouldn't be placed at all: no room before the
+// canvas ends, or something already occupies that window (in which case the day
+// is dense enough there without one).
+function breakSlotAfter(args: {
+  tasks: Task[];
+  taskStart: number;
+  taskMinutes: number;
+  breakMinutes: number;
+}): number | null {
+  const { tasks, taskStart, taskMinutes, breakMinutes } = args;
+  if (breakMinutes <= 0) return null;
+  const start = taskStart + taskMinutes;
+  const end = start + breakMinutes;
+  if (end > CANVAS_END_MIN) return null;
+
+  const collides = tasks.some((t) => {
+    if (t.parentId !== null || !t.inSprint || t.status === "done") return false;
+    if (t.scheduledStartMinutes == null) return false;
+    const otherStart = t.scheduledStartMinutes;
+    const otherEnd = otherStart + getTaskDurationMinutes(t, tasks);
+    return start < otherEnd && end > otherStart;
+  });
+  return collides ? null : start;
 }
 
 // One-time migration: any sprint task missing a scheduledStartMinutes gets one,
@@ -347,17 +393,27 @@ export function reducer(state: State, action: Action): State {
       };
 
     case "ADD_TASK": {
-      const { id, title, minutes, nowMs, scheduledStartMinutes: override } = action.payload;
+      const {
+        id,
+        title,
+        minutes,
+        nowMs,
+        scheduledStartMinutes: override,
+        breakId,
+        breakMinutes,
+      } = action.payload;
       const baseMin = state.settings.scheduledStartMinutes ?? DEFAULT_DAY_START_MIN;
       const scheduledStartMinutes =
         override != null
           ? snapToSchedule(override)
           : findNextFreeSlot({ tasks: state.tasks, baseMin });
+      const taskMinutes = clampMinutes(minutes);
+      const basePosition = maxPosition(state.tasks) + POSITION_GAP;
       const t: Task = {
         id,
         title,
         notes: "",
-        estimateMinutes: clampMinutes(minutes),
+        estimateMinutes: taskMinutes,
         extraMinutes: 0,
         scheduledStartMinutes,
         status: "queued",
@@ -366,10 +422,37 @@ export function reducer(state: State, action: Action): State {
         inSprint: true,
         createdAt: nowMs,
         date: todayLocalISO(new Date(nowMs)),
-        position: maxPosition(state.tasks) + POSITION_GAP,
+        position: basePosition,
         updatedAtMs: nowMs,
       };
-      return { ...state, tasks: normalizeTasks([t, ...state.tasks]) };
+
+      const added: Task[] = [t];
+      const breakStart = breakSlotAfter({
+        tasks: state.tasks,
+        taskStart: scheduledStartMinutes,
+        taskMinutes,
+        breakMinutes: breakMinutes ?? 0,
+      });
+      if (breakId && breakStart != null) {
+        added.push({
+          id: breakId,
+          title: "Break",
+          notes: "",
+          estimateMinutes: clampMinutes(breakMinutes as number),
+          extraMinutes: 0,
+          scheduledStartMinutes: breakStart,
+          status: "queued",
+          kind: "break",
+          parentId: null,
+          inSprint: true,
+          createdAt: nowMs,
+          date: todayLocalISO(new Date(nowMs)),
+          position: basePosition + POSITION_GAP,
+          updatedAtMs: nowMs,
+        });
+      }
+
+      return { ...state, tasks: normalizeTasks([...added, ...state.tasks]) };
     }
 
     case "ADD_SUBTASK": {
@@ -867,6 +950,25 @@ export function reducer(state: State, action: Action): State {
 
     case "SET_SCHEDULED_START":
       return { ...state, settings: { ...state.settings, scheduledStartMinutes: action.minutes } };
+
+    case "SET_POMODORO": {
+      const patch = action.patch;
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          ...(patch.defaultTaskMinutes != null
+            ? { defaultTaskMinutes: clampMinutes(patch.defaultTaskMinutes) }
+            : {}),
+          // 0 is meaningful here — it's how you say "no break" without turning
+          // the whole feature off — so only the floor is clamped.
+          ...(patch.defaultBreakMinutes != null
+            ? { defaultBreakMinutes: Math.max(0, Math.round(patch.defaultBreakMinutes)) }
+            : {}),
+          ...(patch.autoBreak != null ? { autoBreak: patch.autoBreak } : {}),
+        },
+      };
+    }
 
     case "START_FRESH_DAY":
       return {

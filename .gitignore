@@ -12,3 +12,4 @@ out
 .vercel
 .claude/
 tsconfig.tsbuildinfo
+dist-desktop

@@ -1,14 +1,20 @@
 {
   "name": "todoflow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/gen-changelog.mjs",
+    "changelog": "node scripts/gen-changelog.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "ios:sync": "next build && cap sync ios",
-    "ios:open": "npx cap open ios"
+    "ios:open": "npx cap open ios",
+    "desktop:dev": "TODOFLOW_DEV_URL=http://localhost:3000 electron .",
+    "desktop:build": "next build && electron-builder --mac",
+    "desktop:verify": "TODOFLOW_VERIFY=1 electron ."
   },
+  "main": "electron/main.js",
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -36,6 +42,8 @@
     "@types/react": "^18.3.24",
     "@types/react-dom": "^18.3.7",
     "autoprefixer": "^10.4.21",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^8.57.1",
     "eslint-config-next": "14.2.32",
     "postcss": "^8.4.49",

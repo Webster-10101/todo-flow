@@ -2,10 +2,15 @@
 
 import { useEffect, useState } from "react";
 
-// Canvas time bounds (minutes from midnight). Fixed 8am–8pm.
+// The day is logically 00:00–24:00; blocks can live anywhere in it.
+export { DAY_START_MIN, DAY_END_MIN } from "./cascade";
+
+// Default DISPLAYED window (minutes from midnight). The canvas shows 8am–8pm
+// unless scheduled blocks fall outside it, in which case the window expands
+// to include them — useful for planning an evening without a 24-row grid
+// dominating the normal day.
 export const CANVAS_START_MIN = 8 * 60; // 480
 export const CANVAS_END_MIN = 20 * 60; // 1200
-export const CANVAS_RANGE_MIN = CANVAS_END_MIN - CANVAS_START_MIN; // 720
 
 // Snap granularity for scheduled-start times. Matches Focusmate's 15-min grid.
 export const SCHEDULE_SLOT_MIN = 15;

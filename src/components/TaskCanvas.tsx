@@ -16,9 +16,12 @@ import {
 import {
   CANVAS_END_MIN,
   CANVAS_START_MIN,
+  DAY_END_MIN,
+  DAY_START_MIN,
   MIN_BLOCK_HEIGHT_PX,
   SCHEDULE_SLOT_MIN,
 } from "@/src/lib/layout";
+import { cascade, type CascadeBlock } from "@/src/lib/cascade";
 import { paletteForId } from "@/src/lib/palette";
 import { haptic } from "@/src/lib/platform";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -114,8 +117,8 @@ function useCoarsePointer() {
 function snapToCanvas(min: number) {
   const snapped = Math.round(min / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN;
   return Math.max(
-    CANVAS_START_MIN,
-    Math.min(CANVAS_END_MIN - SCHEDULE_SLOT_MIN, snapped),
+    DAY_START_MIN,
+    Math.min(DAY_END_MIN - SCHEDULE_SLOT_MIN, snapped),
   );
 }
 
@@ -125,34 +128,9 @@ function snapToCanvas(min: number) {
 function slotContaining(min: number) {
   const floored = Math.floor(min / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN;
   return Math.max(
-    CANVAS_START_MIN,
-    Math.min(CANVAS_END_MIN - SCHEDULE_SLOT_MIN, floored),
+    DAY_START_MIN,
+    Math.min(DAY_END_MIN - SCHEDULE_SLOT_MIN, floored),
   );
-}
-
-// Given a desired start and a duration, return the closest 15-min slot that
-// doesn't overlap any of `others`. Searches outward from `desired` in slot
-// increments, alternating below/above. Returns null if no slot found within
-// the search window (caller treats null as "snap back to original").
-function findNonOverlappingStart(args: {
-  desired: number;
-  duration: number;
-  others: Array<{ start: number; end: number }>;
-}): number | null {
-  const { desired, duration, others } = args;
-  const overlaps = (start: number) => {
-    const end = start + duration;
-    return others.some((o) => start < o.end && end > o.start);
-  };
-  if (!overlaps(desired)) return desired;
-  const maxDeltaMin = 120; // search ±2 hours
-  for (let d = SCHEDULE_SLOT_MIN; d <= maxDeltaMin; d += SCHEDULE_SLOT_MIN) {
-    const below = snapToCanvas(desired + d);
-    if (!overlaps(below)) return below;
-    const above = snapToCanvas(desired - d);
-    if (!overlaps(above)) return above;
-  }
-  return null;
 }
 
 function TaskBlock(props: {
@@ -172,6 +150,13 @@ function TaskBlock(props: {
   minutesReadOnly?: boolean;
   minutesOverride?: number;
   maxMinutes?: number;
+  // Live cascade preview: where this block would sit if the current drag or
+  // resize committed right now. Rendering only — the stored time is untouched
+  // until the gesture ends.
+  startMinOverride?: number;
+  // Fires with the snapped minutes proposal as a resize drag crosses 15-min
+  // boundaries (null on release) so the canvas can preview the cascade.
+  onResizePreview?: (id: string, minutes: number | null) => void;
   canvasStartMin: number;
   selected?: boolean;
   onSelect?: () => void;
@@ -235,7 +220,10 @@ function TaskBlock(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renameRequested, onRenameHandled]);
 
-  const startMin = props.task.scheduledStartMinutes ?? props.canvasStartMin;
+  const startMin =
+    props.startMinOverride ??
+    props.task.scheduledStartMinutes ??
+    props.canvasStartMin;
   const topPx = (startMin - props.canvasStartMin) * props.pxPerMinute;
   const baseHeightPx = Math.max(MIN_BLOCK_HEIGHT_PX, props.minutes * props.pxPerMinute);
   const heightPx = Math.max(
@@ -255,6 +243,19 @@ function TaskBlock(props: {
   // Stop pointer events on inputs/buttons so they don't activate drag.
   const swallow = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation();
 
+  // Snapped minutes a resize at pointer offset `dy` would commit.
+  const snapResize = (dy: number) => {
+    const proposed = resizeRef.current.startMin + dy / props.pxPerMinute;
+    const snapped = Math.max(
+      SCHEDULE_SLOT_MIN,
+      Math.round(proposed / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN,
+    );
+    return props.maxMinutes != null
+      ? Math.min(snapped, props.maxMinutes)
+      : snapped;
+  };
+  const lastResizePreviewRef = useRef<number | null>(null);
+
   const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
     e.preventDefault();
@@ -263,28 +264,29 @@ function TaskBlock(props: {
       startMin: props.minutes,
       captured: true,
     };
+    lastResizePreviewRef.current = null;
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeRef.current.captured) return;
     setResizeDelta(e.clientY - resizeRef.current.startY);
+    // Recompute the cascade preview only when the snapped proposal crosses a
+    // 15-min boundary — not per pixel.
+    const snapped = snapResize(e.clientY - resizeRef.current.startY);
+    if (snapped !== lastResizePreviewRef.current) {
+      lastResizePreviewRef.current = snapped;
+      props.onResizePreview?.(props.task.id, snapped);
+    }
   };
 
   const onResizeEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeRef.current.captured) return;
-    const dy = e.clientY - resizeRef.current.startY;
-    const dyMin = dy / props.pxPerMinute;
-    const proposed = resizeRef.current.startMin + dyMin;
-    let snapped = Math.max(
-      SCHEDULE_SLOT_MIN,
-      Math.round(proposed / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN,
-    );
-    if (props.maxMinutes != null) {
-      snapped = Math.min(snapped, props.maxMinutes);
-    }
+    const snapped = snapResize(e.clientY - resizeRef.current.startY);
     resizeRef.current.captured = false;
     setResizeDelta(0);
+    lastResizePreviewRef.current = null;
+    props.onResizePreview?.(props.task.id, null);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
@@ -611,30 +613,57 @@ export function TaskCanvas(props: {
   // create. Fine-pointer only; cleared while dragging or over a block.
   const [hoverStart, setHoverStart] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Live bounce-down preview during a drag or resize: id -> the start each
+  // displaced block would settle at if the gesture committed now. Rendering
+  // only — stored times don't change until the reducer commit on release,
+  // which runs the same cascade and therefore lands blocks exactly where the
+  // preview showed them.
+  const [previewMoves, setPreviewMoves] = useState<Map<string, number> | null>(
+    null,
+  );
+  const lastDragPreviewRef = useRef<number | null>(null);
 
-  // Dynamic canvas start: trim the empty hours above "now". Start the visible
-  // canvas at hour-floor(now - 60min), but pull earlier if any queued task is
-  // scheduled before that. Clamps to the hard 8am floor.
+  // Displayed window: 8am–8pm by default. Trimmed at the top when the morning
+  // is empty and behind us; expanded in either direction when scheduled blocks
+  // fall outside it (the day is logically 00:00–24:00). Computed from
+  // COMMITTED positions only — the window stays frozen during a drag so the
+  // coordinate space can't shift under the pointer; it grows on drop.
   const nowMinForStart = props.now.getHours() * 60 + props.now.getMinutes();
-  const earliestQueuedStart = useMemo(() => {
+  const blockExtent = useMemo(() => {
+    const minutesById = new Map(
+      props.schedule.rows.map((r) => [r.taskId, r.minutes]),
+    );
     let earliest = Number.POSITIVE_INFINITY;
+    let latestEnd = Number.NEGATIVE_INFINITY;
     for (const t of props.tasks) {
       if (t.parentId !== null) continue;
       if (t.scheduledStartMinutes == null) continue;
       earliest = Math.min(earliest, t.scheduledStartMinutes);
+      latestEnd = Math.max(
+        latestEnd,
+        t.scheduledStartMinutes + (minutesById.get(t.id) ?? SCHEDULE_SLOT_MIN),
+      );
     }
-    return earliest;
-  }, [props.tasks]);
-  const effectiveStartMin = useMemo(() => {
+    return { earliest, latestEnd };
+  }, [props.tasks, props.schedule.rows]);
+  const displayStartMin = useMemo(() => {
     const nowFloor = Math.floor((nowMinForStart - 60) / 60) * 60;
+    const defaultStart = Math.max(CANVAS_START_MIN, nowFloor);
     const earliestFloor =
-      earliestQueuedStart === Number.POSITIVE_INFINITY
-        ? nowFloor
-        : Math.floor(earliestQueuedStart / 60) * 60;
-    return Math.max(CANVAS_START_MIN, Math.min(nowFloor, earliestFloor));
-  }, [nowMinForStart, earliestQueuedStart]);
+      blockExtent.earliest === Number.POSITIVE_INFINITY
+        ? defaultStart
+        : Math.floor(blockExtent.earliest / 60) * 60;
+    return Math.max(DAY_START_MIN, Math.min(defaultStart, earliestFloor));
+  }, [nowMinForStart, blockExtent.earliest]);
+  const displayEndMin = useMemo(() => {
+    const latestCeil =
+      blockExtent.latestEnd === Number.NEGATIVE_INFINITY
+        ? CANVAS_END_MIN
+        : Math.ceil(blockExtent.latestEnd / 60) * 60;
+    return Math.min(DAY_END_MIN, Math.max(CANVAS_END_MIN, latestCeil));
+  }, [blockExtent.latestEnd]);
 
-  const canvasHeightPx = (CANVAS_END_MIN - effectiveStartMin) * props.pxPerMinute;
+  const canvasHeightPx = (displayEndMin - displayStartMin) * props.pxPerMinute;
   const slotPx = SCHEDULE_SLOT_MIN * props.pxPerMinute; // 15-min line
 
   // Latch the drag transform to the 15-min grid so blocks visually snap as you
@@ -686,16 +715,63 @@ export function TaskCanvas(props: {
     [props.tasks],
   );
 
+  // Mirror of the reducer's cascadeTasks input-building, fed from the canvas's
+  // own view of the day (schedule rows for durations). Same pure cascade, so
+  // preview and commit agree by determinism.
+  const computePreviewMoves = (placedId: string, start: number, end: number) => {
+    const movable: CascadeBlock[] = [];
+    const obstacles: Array<{ start: number; end: number }> = [{ start, end }];
+    for (const t of topLevel) {
+      if (t.id === placedId || t.scheduledStartMinutes == null) continue;
+      if (!t.inSprint || t.status === "done") continue;
+      const minutes = scheduleById.get(t.id)?.minutes ?? SCHEDULE_SLOT_MIN;
+      if (t.status === "active") {
+        // Pinned to where the timer actually is; flows around, never moves.
+        const r = scheduleById.get(t.id);
+        if (r) {
+          const d = new Date(r.startMs);
+          const s = d.getHours() * 60 + d.getMinutes();
+          obstacles.push({ start: s, end: s + r.minutes });
+        }
+        continue;
+      }
+      movable.push({
+        id: t.id,
+        start: t.scheduledStartMinutes,
+        duration: minutes,
+        position: t.position,
+        createdAt: t.createdAt,
+      });
+    }
+    return cascade({ movable, obstacles }).moves;
+  };
+
+  const handleResizePreview = (id: string, minutes: number | null) => {
+    if (minutes == null) {
+      setPreviewMoves(null);
+      return;
+    }
+    const task = topLevel.find((t) => t.id === id);
+    if (!task || task.scheduledStartMinutes == null) return;
+    setPreviewMoves(
+      computePreviewMoves(
+        id,
+        task.scheduledStartMinutes,
+        task.scheduledStartMinutes + minutes,
+      ),
+    );
+  };
+
   // Build gutter labels at every 15 min: hour labels bold, :15/:30/:45 faded.
   const gutterLabels: number[] = [];
-  for (let m = effectiveStartMin; m <= CANVAS_END_MIN; m += SCHEDULE_SLOT_MIN) {
+  for (let m = displayStartMin; m <= displayEndMin; m += SCHEDULE_SLOT_MIN) {
     gutterLabels.push(m);
   }
 
   // Current time line — only visible if "now" falls inside the canvas window.
   const nowMin = props.now.getHours() * 60 + props.now.getMinutes();
-  const nowInCanvas = nowMin >= effectiveStartMin && nowMin <= CANVAS_END_MIN;
-  const nowTopPx = (nowMin - effectiveStartMin) * props.pxPerMinute;
+  const nowInCanvas = nowMin >= displayStartMin && nowMin <= displayEndMin;
+  const nowTopPx = (nowMin - displayStartMin) * props.pxPerMinute;
   const nowLabel = `${Math.floor(nowMin / 60).toString().padStart(2, "0")}:${(nowMin % 60).toString().padStart(2, "0")}`;
 
   // On first mount, scroll the page so the now-line sits ~80px from the top
@@ -724,33 +800,49 @@ export function TaskCanvas(props: {
         setPendingCreate(null);
         setHoverStart(null);
         setIsDragging(true);
+        lastDragPreviewRef.current = null;
         props.onSelect?.(String(e.active.id));
       }}
-      onDragCancel={() => setIsDragging(false)}
-      onDragEnd={(e) => {
-        setIsDragging(false);
+      onDragMove={(e) => {
         const task = topLevel.find((t) => t.id === String(e.active.id));
         if (!task || task.scheduledStartMinutes == null) return;
         const dyMin = e.delta.y / props.pxPerMinute;
-        const desired = snapToCanvas(task.scheduledStartMinutes + dyMin);
-        if (desired === task.scheduledStartMinutes) return;
-        const row = scheduleById.get(task.id);
-        const duration = row?.minutes ?? props.schedule.rows.find((r) => r.taskId === task.id)?.minutes ?? 15;
-        const others = topLevel
-          .filter((t) => t.id !== task.id && t.scheduledStartMinutes != null)
-          .map((t) => {
-            const r = scheduleById.get(t.id);
-            const start = t.scheduledStartMinutes as number;
-            const end = start + (r?.minutes ?? 15);
-            return { start, end };
-          });
-        const placed = findNonOverlappingStart({
-          desired,
-          duration,
-          others,
-        });
-        if (placed != null && placed !== task.scheduledStartMinutes) {
-          props.onSetTaskTime(task.id, placed);
+        const duration =
+          scheduleById.get(task.id)?.minutes ?? SCHEDULE_SLOT_MIN;
+        // Same maths as onDragEnd — recompute only when the snapped slot
+        // changes, not per pointer event.
+        const desired = Math.min(
+          snapToCanvas(task.scheduledStartMinutes + dyMin),
+          Math.max(DAY_START_MIN, DAY_END_MIN - duration),
+        );
+        if (desired === lastDragPreviewRef.current) return;
+        lastDragPreviewRef.current = desired;
+        setPreviewMoves(
+          computePreviewMoves(task.id, desired, desired + duration),
+        );
+      }}
+      onDragCancel={() => {
+        setIsDragging(false);
+        setPreviewMoves(null);
+        lastDragPreviewRef.current = null;
+      }}
+      onDragEnd={(e) => {
+        setIsDragging(false);
+        setPreviewMoves(null);
+        lastDragPreviewRef.current = null;
+        const task = topLevel.find((t) => t.id === String(e.active.id));
+        if (!task || task.scheduledStartMinutes == null) return;
+        const dyMin = e.delta.y / props.pxPerMinute;
+        const duration =
+          scheduleById.get(task.id)?.minutes ?? SCHEDULE_SLOT_MIN;
+        const desired = Math.min(
+          snapToCanvas(task.scheduledStartMinutes + dyMin),
+          Math.max(DAY_START_MIN, DAY_END_MIN - duration),
+        );
+        // One dispatch — the reducer runs the same cascade the live preview
+        // showed, so blocks settle exactly where the preview had them.
+        if (desired !== task.scheduledStartMinutes) {
+          props.onSetTaskTime(task.id, desired);
         }
       }}
     >
@@ -769,7 +861,7 @@ export function TaskCanvas(props: {
                     ? "text-[12px] font-medium text-ink"
                     : "text-[10px] text-muted/60",
                 ].join(" ")}
-                style={{ top: (m - effectiveStartMin) * props.pxPerMinute }}
+                style={{ top: (m - displayStartMin) * props.pxPerMinute }}
               >
                 {isHour ? `${h.toString().padStart(2, "0")}:00` : `:${min.toString().padStart(2, "0")}`}
               </div>
@@ -786,7 +878,7 @@ export function TaskCanvas(props: {
             if (e.target !== e.currentTarget) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const yOffset = e.clientY - rect.top;
-            const clickedMin = effectiveStartMin + yOffset / props.pxPerMinute;
+            const clickedMin = displayStartMin + yOffset / props.pxPerMinute;
             const snapped = slotContaining(clickedMin);
             props.onSelect?.(null);
             if (coarsePointer) {
@@ -810,7 +902,7 @@ export function TaskCanvas(props: {
             }
             const rect = e.currentTarget.getBoundingClientRect();
             const hoveredMin =
-              effectiveStartMin + (e.clientY - rect.top) / props.pxPerMinute;
+              displayStartMin + (e.clientY - rect.top) / props.pxPerMinute;
             setHoverStart(slotContaining(hoveredMin));
           }}
           onMouseLeave={() => setHoverStart(null)}
@@ -823,9 +915,9 @@ export function TaskCanvas(props: {
               aria-hidden
               className="pointer-events-none absolute inset-x-1 rounded-lg border-2 border-dashed border-ink/15 bg-ink/[0.03] transition-[top] duration-100 ease-out"
               style={{
-                top: (hoverStart - effectiveStartMin) * props.pxPerMinute,
+                top: (hoverStart - displayStartMin) * props.pxPerMinute,
                 height:
-                  Math.min(props.createMinutes, CANVAS_END_MIN - hoverStart) *
+                  Math.min(props.createMinutes, DAY_END_MIN - hoverStart) *
                   props.pxPerMinute,
               }}
             >
@@ -839,7 +931,7 @@ export function TaskCanvas(props: {
             <div
               className="absolute inset-x-1 z-20 rounded-lg border-2 border-dashed border-ink/30 bg-white/70 backdrop-blur-[2px] flex items-center justify-center"
               style={{
-                top: (pendingCreate - effectiveStartMin) * props.pxPerMinute,
+                top: (pendingCreate - displayStartMin) * props.pxPerMinute,
                 height: props.createMinutes * props.pxPerMinute,
               }}
               onClick={(e) => e.stopPropagation()}
@@ -888,23 +980,10 @@ export function TaskCanvas(props: {
           {topLevel.map((t) => {
             const row = scheduleById.get(t.id);
             if (!row) return null;
-            // Cap resize at the start of the next block below (if any).
-            const myStart = t.scheduledStartMinutes ?? effectiveStartMin;
-            const nextStart = topLevel
-              .filter(
-                (o) =>
-                  o.id !== t.id &&
-                  o.scheduledStartMinutes != null &&
-                  (o.scheduledStartMinutes as number) >= myStart + row.minutes,
-              )
-              .reduce<number | null>((acc, o) => {
-                const s = o.scheduledStartMinutes as number;
-                return acc == null ? s : Math.min(acc, s);
-              }, null);
-            const maxByNext = nextStart != null ? nextStart - myStart : null;
-            const maxByCanvas = CANVAS_END_MIN - myStart;
-            const maxMinutes =
-              maxByNext != null ? Math.min(maxByNext, maxByCanvas) : maxByCanvas;
+            // Growing into the next block pushes it (bounce-down cascade) —
+            // midnight is the only resize cap.
+            const myStart = t.scheduledStartMinutes ?? displayStartMin;
+            const maxMinutes = DAY_END_MIN - myStart;
             return (
               <TaskBlock
                 key={t.id}
@@ -924,7 +1003,9 @@ export function TaskCanvas(props: {
                 minutesReadOnly={props.minutesReadOnlyById?.[t.id]}
                 minutesOverride={props.minutesOverrideById?.[t.id]}
                 maxMinutes={maxMinutes}
-                canvasStartMin={effectiveStartMin}
+                startMinOverride={previewMoves?.get(t.id)}
+                onResizePreview={handleResizePreview}
+                canvasStartMin={displayStartMin}
                 selected={props.selectedId === t.id}
                 onSelect={() => props.onSelect?.(t.id)}
                 renameRequested={props.renamingId === t.id}

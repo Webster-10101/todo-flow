@@ -12,7 +12,8 @@ export type Task = {
   estimateMinutes: number;
   extraMinutes: number;
   // Absolute scheduled clock-time in minutes from midnight (e.g. 540 = 09:00).
-  // Null for tasks not in the sprint (Later/Done). Snapped to 30 min.
+  // Null for tasks not in the sprint (Later/Done). User placements snap to the
+  // 15-min grid; cascade-displaced blocks and auto-breaks can sit off-grid.
   scheduledStartMinutes: number | null;
   status: TaskStatus;
   kind: TaskKind;

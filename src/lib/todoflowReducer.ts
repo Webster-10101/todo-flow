@@ -2,7 +2,7 @@ import type { RunnerState, Settings, Task } from "./types";
 import { DEFAULT_BREAK_MINUTES, DEFAULT_TASK_MINUTES, POSITION_GAP } from "./types";
 import { clampMinutes } from "./ids";
 import { todayLocalISO } from "./dates";
-import { CANVAS_END_MIN } from "./layout";
+import { cascade, DAY_END_MIN, type CascadeBlock } from "./cascade";
 
 export type State = {
   tasks: Task[];
@@ -167,32 +167,56 @@ export function findNextFreeSlot(args: {
   return candidate;
 }
 
-// Where an auto-break goes after a freshly added task: butted right up against
-// it, deliberately NOT snapped to the 15-min grid — a 25-min task at 09:00 gets
-// its break at 09:25, so the 30-minute cycle lands back on the grid at 09:30.
-// Returns null when a break shouldn't be placed at all: no room before the
-// canvas ends, or something already occupies that window (in which case the day
-// is dense enough there without one).
-function breakSlotAfter(args: {
+// Bounce-down: after a block lands (dropped, resized, created, extended),
+// push every queued sprint block it now collides with LATER, gap-absorbing —
+// see cascade.ts. `placed` is the interval that just claimed its spot (one
+// row, or task + auto-break together); its ids are excluded from the sweep.
+// Displaced rows come back touch()-stamped; everything else keeps its object
+// identity so the sync engine's per-id reference diff pushes only real moves.
+function cascadeTasks(args: {
   tasks: Task[];
-  taskStart: number;
-  taskMinutes: number;
-  breakMinutes: number;
-}): number | null {
-  const { tasks, taskStart, taskMinutes, breakMinutes } = args;
-  if (breakMinutes <= 0) return null;
-  const start = taskStart + taskMinutes;
-  const end = start + breakMinutes;
-  if (end > CANVAS_END_MIN) return null;
+  placed: { ids: string[]; start: number; end: number };
+  activeTaskId: string | null;
+  nowMs: number;
+}): Task[] {
+  const { tasks, placed, activeTaskId, nowMs } = args;
+  if (placed.end <= placed.start) return tasks;
+  const placedIds = new Set(placed.ids);
 
-  const collides = tasks.some((t) => {
-    if (t.parentId !== null || !t.inSprint || t.status === "done") return false;
-    if (t.scheduledStartMinutes == null) return false;
-    const otherStart = t.scheduledStartMinutes;
-    const otherEnd = otherStart + getTaskDurationMinutes(t, tasks);
-    return start < otherEnd && end > otherStart;
+  const movable: CascadeBlock[] = [];
+  let activeInterval: { start: number; end: number } | null = null;
+  for (const t of tasks) {
+    if (t.parentId !== null || !t.inSprint || t.scheduledStartMinutes == null) continue;
+    if (placedIds.has(t.id) || t.status === "done") continue;
+    const duration = getTaskDurationMinutes(t, tasks);
+    if (t.id === activeTaskId || t.status === "active") {
+      // The running block is pinned to activeStartedAt — never moved.
+      activeInterval = {
+        start: t.scheduledStartMinutes,
+        end: t.scheduledStartMinutes + duration,
+      };
+      continue;
+    }
+    movable.push({
+      id: t.id,
+      start: t.scheduledStartMinutes,
+      duration,
+      position: t.position,
+      createdAt: t.createdAt,
+    });
+  }
+
+  const obstacles = [{ start: placed.start, end: placed.end }];
+  if (activeInterval) obstacles.push(activeInterval);
+  const { moves } = cascade({ movable, obstacles });
+  if (moves.size === 0) return tasks;
+
+  return tasks.map((t) => {
+    const newStart = moves.get(t.id);
+    return newStart == null
+      ? t
+      : touch({ ...t, scheduledStartMinutes: newStart }, nowMs);
   });
-  return collides ? null : start;
 }
 
 // One-time migration: any sprint task missing a scheduledStartMinutes gets one,
@@ -404,11 +428,14 @@ export function reducer(state: State, action: Action): State {
         breakMinutes,
       } = action.payload;
       const baseMin = state.settings.scheduledStartMinutes ?? DEFAULT_DAY_START_MIN;
+      const taskMinutes = clampMinutes(minutes);
       const scheduledStartMinutes =
         override != null
-          ? snapToSchedule(override)
+          ? Math.min(
+              snapToSchedule(override),
+              Math.max(0, DAY_END_MIN - taskMinutes),
+            )
           : findNextFreeSlot({ tasks: state.tasks, baseMin });
-      const taskMinutes = clampMinutes(minutes);
       const basePosition = maxPosition(state.tasks) + POSITION_GAP;
       const t: Task = {
         id,
@@ -428,12 +455,18 @@ export function reducer(state: State, action: Action): State {
       };
 
       const added: Task[] = [t];
-      const breakStart = breakSlotAfter({
-        tasks: state.tasks,
-        taskStart: scheduledStartMinutes,
-        taskMinutes,
-        breakMinutes: breakMinutes ?? 0,
-      });
+      // Auto-break: butted right up against the task, deliberately NOT
+      // snapped to the 15-min grid — a 25-min task at 09:00 gets its break at
+      // 09:25, so the 30-minute cycle lands back on the grid at 09:30.
+      // Anything already occupying that window gets bounced by the cascade
+      // below; the break is only skipped when there's no room before midnight.
+      const breakStart =
+        breakId != null &&
+        breakMinutes != null &&
+        breakMinutes > 0 &&
+        scheduledStartMinutes + taskMinutes + breakMinutes <= DAY_END_MIN
+          ? scheduledStartMinutes + taskMinutes
+          : null;
       if (breakId && breakStart != null) {
         added.push({
           id: breakId,
@@ -453,7 +486,27 @@ export function reducer(state: State, action: Action): State {
         });
       }
 
-      return { ...state, tasks: normalizeTasks([...added, ...state.tasks]) };
+      // One cascade for the combined task+break span — both rows land as a
+      // unit, and it stays one action (one undo step, both rows stamped).
+      const placedEnd =
+        breakStart != null && breakMinutes != null
+          ? breakStart + clampMinutes(breakMinutes)
+          : scheduledStartMinutes + taskMinutes;
+      return {
+        ...state,
+        tasks: normalizeTasks(
+          cascadeTasks({
+            tasks: [...added, ...state.tasks],
+            placed: {
+              ids: added.map((a) => a.id),
+              start: scheduledStartMinutes,
+              end: placedEnd,
+            },
+            activeTaskId: state.runner.activeTaskId,
+            nowMs,
+          }),
+        ),
+      };
     }
 
     case "ADD_SUBTASK": {
@@ -488,7 +541,23 @@ export function reducer(state: State, action: Action): State {
       let insertAt = parentIdx + 1;
       while (insertAt < next.length && next[insertAt].parentId === parentId) insertAt++;
       next.splice(insertAt, 0, st);
-      return { ...state, tasks: normalizeTasks(next) };
+      // A new subtask grows the parent's derived duration — its block may now
+      // collide with whatever sits below it.
+      const parent = next[parentIdx];
+      let out = next;
+      if (parent.inSprint && parent.status !== "done" && parent.scheduledStartMinutes != null) {
+        out = cascadeTasks({
+          tasks: next,
+          placed: {
+            ids: [parent.id],
+            start: parent.scheduledStartMinutes,
+            end: parent.scheduledStartMinutes + getTaskDurationMinutes(parent, next),
+          },
+          activeTaskId: state.runner.activeTaskId,
+          nowMs,
+        });
+      }
+      return { ...state, tasks: normalizeTasks(out) };
     }
 
     case "EDIT_TITLE":
@@ -501,20 +570,42 @@ export function reducer(state: State, action: Action): State {
         ),
       };
 
-    case "EDIT_MINUTES":
-      return {
-        ...state,
-        tasks: normalizeTasks(
-          state.tasks.map((t) =>
-            t.id === action.id
-              ? touch(
-                  { ...t, estimateMinutes: clampMinutes(action.minutes), extraMinutes: 0 },
-                  action.nowMs,
-                )
-              : t,
-          ),
-        ),
-      };
+    case "EDIT_MINUTES": {
+      const next = state.tasks.map((t) =>
+        t.id === action.id
+          ? touch(
+              { ...t, estimateMinutes: clampMinutes(action.minutes), extraMinutes: 0 },
+              action.nowMs,
+            )
+          : t,
+      );
+      // Growing a block (or a subtask growing its parent's derived duration)
+      // pushes whatever it now collides with, rather than being capped.
+      const target = next.find((t) => t.id === action.id);
+      const block = target?.parentId
+        ? next.find((t) => t.id === target.parentId)
+        : target;
+      let out = next;
+      if (
+        block &&
+        block.parentId === null &&
+        block.inSprint &&
+        block.status !== "done" &&
+        block.scheduledStartMinutes != null
+      ) {
+        out = cascadeTasks({
+          tasks: next,
+          placed: {
+            ids: [block.id],
+            start: block.scheduledStartMinutes,
+            end: block.scheduledStartMinutes + getTaskDurationMinutes(block, next),
+          },
+          activeTaskId: state.runner.activeTaskId,
+          nowMs: action.nowMs,
+        });
+      }
+      return { ...state, tasks: normalizeTasks(out) };
+    }
 
     case "EDIT_NOTES":
       return {
@@ -569,14 +660,25 @@ export function reducer(state: State, action: Action): State {
       const baseMin = state.settings.scheduledStartMinutes ?? DEFAULT_DAY_START_MIN;
       const slot =
         target.scheduledStartMinutes ?? findNextFreeSlot({ tasks: state.tasks, baseMin });
+      const next = state.tasks.map((t) =>
+        t.id === action.id
+          ? touch({ ...t, inSprint: true, scheduledStartMinutes: slot }, action.nowMs)
+          : t,
+      );
+      // A kept-from-before time can land on today's blocks — bounce them.
       return {
         ...state,
         tasks: normalizeTasks(
-          state.tasks.map((t) =>
-            t.id === action.id
-              ? touch({ ...t, inSprint: true, scheduledStartMinutes: slot }, action.nowMs)
-              : t,
-          ),
+          cascadeTasks({
+            tasks: next,
+            placed: {
+              ids: [action.id],
+              start: slot,
+              end: slot + getTaskDurationMinutes(target, state.tasks),
+            },
+            activeTaskId: state.runner.activeTaskId,
+            nowMs: action.nowMs,
+          }),
         ),
       };
     }
@@ -625,7 +727,10 @@ export function reducer(state: State, action: Action): State {
         const originalDuration = getTaskDurationMinutes(original, state.tasks);
         const duplicateStart =
           original.scheduledStartMinutes != null
-            ? snapToSchedule(original.scheduledStartMinutes + originalDuration + 10)
+            ? Math.min(
+                snapToSchedule(original.scheduledStartMinutes + originalDuration + 10),
+                Math.max(0, DAY_END_MIN - originalDuration),
+              )
             : findNextFreeSlot({ tasks: state.tasks, baseMin });
         const newParent = cloneAs(original, {
           id: newParentId,
@@ -642,7 +747,21 @@ export function reducer(state: State, action: Action): State {
         let insertAt = parentIdx + 1;
         while (insertAt < next.length && next[insertAt].parentId === original.id) insertAt++;
         next.splice(insertAt, 0, newParent, ...newChildren);
-        return { ...state, tasks: normalizeTasks(next) };
+        return {
+          ...state,
+          tasks: normalizeTasks(
+            cascadeTasks({
+              tasks: next,
+              placed: {
+                ids: [newParent.id],
+                start: duplicateStart,
+                end: duplicateStart + getTaskDurationMinutes(newParent, next),
+              },
+              activeTaskId: state.runner.activeTaskId,
+              nowMs,
+            }),
+          ),
+        };
       }
 
       const newSub = cloneAs(original, { id: newParentId, parentId: original.parentId });
@@ -681,15 +800,40 @@ export function reducer(state: State, action: Action): State {
     }
 
     case "SET_TASK_TIME": {
-      const snapped = action.minutes == null ? null : snapToSchedule(action.minutes);
+      const target = state.tasks.find((t) => t.id === action.id);
+      if (!target) return state;
+      if (action.minutes == null) {
+        return {
+          ...state,
+          tasks: normalizeTasks(
+            state.tasks.map((t) =>
+              t.id === action.id
+                ? touch({ ...t, scheduledStartMinutes: null }, action.nowMs)
+                : t,
+            ),
+          ),
+        };
+      }
+      const duration = getTaskDurationMinutes(target, state.tasks);
+      const snapped = Math.min(
+        snapToSchedule(action.minutes),
+        Math.max(0, DAY_END_MIN - duration),
+      );
+      const next = state.tasks.map((t) =>
+        t.id === action.id
+          ? touch({ ...t, scheduledStartMinutes: snapped }, action.nowMs)
+          : t,
+      );
+      // The drag-commit path: whatever the block landed on bounces down.
       return {
         ...state,
         tasks: normalizeTasks(
-          state.tasks.map((t) =>
-            t.id === action.id
-              ? touch({ ...t, scheduledStartMinutes: snapped }, action.nowMs)
-              : t,
-          ),
+          cascadeTasks({
+            tasks: next,
+            placed: { ids: [action.id], start: snapped, end: snapped + duration },
+            activeTaskId: state.runner.activeTaskId,
+            nowMs: action.nowMs,
+          }),
         ),
       };
     }
@@ -889,16 +1033,45 @@ export function reducer(state: State, action: Action): State {
     case "EXTEND_ACTIVE": {
       const id = state.runner.activeTaskId;
       if (!id) return state;
-      return {
-        ...state,
-        tasks: normalizeTasks(
-          state.tasks.map((t) =>
-            t.id === id
-              ? touch({ ...t, extraMinutes: t.extraMinutes + action.minutes }, action.nowMs)
-              : t,
-          ),
-        ),
-      };
+      const next = state.tasks.map((t) =>
+        t.id === id
+          ? touch({ ...t, extraMinutes: t.extraMinutes + action.minutes }, action.nowMs)
+          : t,
+      );
+      // Growing the running block pushes what's below it. The placed span is
+      // where the timer ACTUALLY is: for a top-level active task that's
+      // activeStartedAt + duration + pauses (the rendered position), not the
+      // stale scheduledStartMinutes; an active subtask grows its parent
+      // block, which renders at the parent's scheduled time.
+      const active = next.find((t) => t.id === id);
+      const r = state.runner;
+      let placed: { ids: string[]; start: number; end: number } | null = null;
+      if (active && active.parentId === null && r.activeStartedAt != null) {
+        const startDate = new Date(r.activeStartedAt);
+        const startMin = startDate.getHours() * 60 + startDate.getMinutes();
+        const pausedSoFar =
+          r.pauseAccumulatedMs +
+          (r.pausedAt ? Math.max(0, action.nowMs - r.pausedAt) : 0);
+        const endMin = Math.min(
+          DAY_END_MIN,
+          Math.ceil(startMin + getTaskDurationMinutes(active, next) + pausedSoFar / 60_000),
+        );
+        placed = { ids: [id], start: startMin, end: endMin };
+      } else if (active?.parentId != null) {
+        const parent = next.find((t) => t.id === active.parentId);
+        if (parent && parent.inSprint && parent.scheduledStartMinutes != null) {
+          placed = {
+            ids: [parent.id],
+            start: parent.scheduledStartMinutes,
+            end:
+              parent.scheduledStartMinutes + getTaskDurationMinutes(parent, next),
+          };
+        }
+      }
+      const out = placed
+        ? cascadeTasks({ tasks: next, placed, activeTaskId: id, nowMs: action.nowMs })
+        : next;
+      return { ...state, tasks: normalizeTasks(out) };
     }
 
     case "REDUCE_ACTIVE": {

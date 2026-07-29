@@ -2,6 +2,20 @@
 
 Generated from `changelog.json` — edit that, not this file.
 
+## 1.3.0 — 2026-07-29
+
+_Blocks push each other out of the way_
+
+### Added
+
+- The canvas now works like a scratchboard. Drop a block onto a busy time and whatever's there bounces down to make room — free gaps absorb the shuffle, everything keeps its order, and a task's break stays glued to it.
+- You can see it happen live: while you're still dragging, the other blocks slide into their new spots so you know exactly what you'll get before you let go.
+
+### Changed
+
+- Resizing a block no longer stops at the next one — growing a task nudges everything below it down instead. Creating a task in a busy spot does the same.
+- The day is no longer boxed into 8am–8pm. The canvas still shows the main day by default, but it stretches to fit early mornings and late evenings whenever you plan them — up to midnight.
+
 ## 1.2.0 — 2026-07-27
 
 _Start any task from its own block_

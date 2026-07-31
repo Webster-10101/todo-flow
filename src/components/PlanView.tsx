@@ -33,6 +33,7 @@ export function PlanView(props: {
   onStartSprint: () => void;
   onReorderSubtasks: (parentId: string, orderedChildIds: string[]) => void;
   onSetTaskTime: (id: string, minutes: number) => void;
+  onMoveTaskGroup: (ids: string[], deltaMinutes: number) => void;
   onEditTitle: (id: string, title: string) => void;
   onEditMinutes: (id: string, minutes: number) => void;
   onEditNotes: (id: string, notes: string) => void;
@@ -53,6 +54,9 @@ export function PlanView(props: {
   // Selected canvas block — drives the mobile BlockActionBar + chunky resize
   // handle. Selection is harmless on desktop (just a ring).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Shift-click multi-selection (desktop). Dragging any member moves the whole
+  // group, keeping relative gaps. A plain click or background click clears it.
+  const [multiSelectedIds, setMultiSelectedIds] = useState<string[]>([]);
   // Touch rename request — the action bar sets it, the canvas block consumes it
   // and clears it. Desktop just double-clicks the title instead.
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -176,7 +180,35 @@ export function PlanView(props: {
     if (selectedId && !sprintAll.some((t) => t.id === selectedId)) {
       setSelectedId(null);
     }
-  }, [selectedId, sprintAll]);
+    if (multiSelectedIds.some((id) => !sprintAll.some((t) => t.id === id))) {
+      setMultiSelectedIds((prev) =>
+        prev.filter((id) => sprintAll.some((t) => t.id === id)),
+      );
+    }
+  }, [selectedId, multiSelectedIds, sprintAll]);
+
+  const handleSelect = useCallback((id: string | null) => {
+    setSelectedId(id);
+    setMultiSelectedIds([]);
+  }, []);
+  const handleToggleMultiSelect = useCallback(
+    (id: string) => {
+      // Shift-clicking with only a plain selection folds that block into the
+      // group, so click A + shift-click B selects both.
+      const seed =
+        multiSelectedIds.length === 0 && selectedId && selectedId !== id
+          ? [selectedId]
+          : multiSelectedIds;
+      if (seed.includes(id)) {
+        setMultiSelectedIds(seed.filter((x) => x !== id));
+        if (selectedId === id) setSelectedId(null);
+      } else {
+        setMultiSelectedIds([...seed, id]);
+        setSelectedId(id);
+      }
+    },
+    [multiSelectedIds, selectedId],
+  );
 
   const selectedTask = useMemo(
     () => (selectedId ? sprintAll.find((t) => t.id === selectedId) ?? null : null),
@@ -370,7 +402,10 @@ export function PlanView(props: {
           minutesOverrideById={minutesOverrideById}
           minutesReadOnlyById={minutesReadOnlyById}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onSelect={handleSelect}
+          multiSelectedIds={multiSelectedIds}
+          onToggleMultiSelect={handleToggleMultiSelect}
+          onMoveTaskGroup={props.onMoveTaskGroup}
           renamingId={renamingId}
           onRenameHandled={clearRenaming}
         />

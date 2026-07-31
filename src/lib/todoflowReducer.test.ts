@@ -120,3 +120,88 @@ describe("reducer bounce-down wiring", () => {
     expect(startOf(out, "mover")).toBe(1380); // 23:00, ends 24:00
   });
 });
+
+describe("MOVE_TASK_GROUP", () => {
+  it("moves every block by the same delta, preserving the gaps between them", () => {
+    // a 9:00, b 10:00 (35-min gap). +60 → 10:00 and 11:00, gap intact.
+    const s = stateWith([
+      task({ id: "a", scheduledStartMinutes: 540 }),
+      task({ id: "b", scheduledStartMinutes: 600 }),
+    ]);
+    const out = reducer(s, {
+      type: "MOVE_TASK_GROUP",
+      ids: ["a", "b"],
+      deltaMinutes: 60,
+      nowMs: NOW,
+    });
+    expect(startOf(out, "a")).toBe(600);
+    expect(startOf(out, "b")).toBe(660);
+  });
+
+  it("moves earlier too — negative delta", () => {
+    const s = stateWith([
+      task({ id: "a", scheduledStartMinutes: 600 }),
+      task({ id: "b", scheduledStartMinutes: 660 }),
+    ]);
+    const out = reducer(s, {
+      type: "MOVE_TASK_GROUP",
+      ids: ["a", "b"],
+      deltaMinutes: -60,
+      nowMs: NOW,
+    });
+    expect(startOf(out, "a")).toBe(540);
+    expect(startOf(out, "b")).toBe(600);
+  });
+
+  it("bounces unselected blocks off every landed group member", () => {
+    // Group a 9:00, b 10:00 lands +30; victim at 10:30 collides with b's new
+    // 10:30–10:55 interval and bounces to 10:55.
+    const s = stateWith([
+      task({ id: "a", scheduledStartMinutes: 540 }),
+      task({ id: "b", scheduledStartMinutes: 600 }),
+      task({ id: "victim", scheduledStartMinutes: 630, estimateMinutes: 30 }),
+    ]);
+    const out = reducer(s, {
+      type: "MOVE_TASK_GROUP",
+      ids: ["a", "b"],
+      deltaMinutes: 30,
+      nowMs: NOW,
+    });
+    expect(startOf(out, "a")).toBe(570);
+    expect(startOf(out, "b")).toBe(630);
+    expect(startOf(out, "victim")).toBe(655);
+  });
+
+  it("clamps the delta so the whole group stays inside the day", () => {
+    // b ends at 23:25 → only 35 min of headroom; both blocks move by 35.
+    const s = stateWith([
+      task({ id: "a", scheduledStartMinutes: 1320 }),
+      task({ id: "b", scheduledStartMinutes: 1380 }),
+    ]);
+    const out = reducer(s, {
+      type: "MOVE_TASK_GROUP",
+      ids: ["a", "b"],
+      deltaMinutes: 120,
+      nowMs: NOW,
+    });
+    expect(startOf(out, "a")).toBe(1355);
+    expect(startOf(out, "b")).toBe(1415); // ends 24:00
+  });
+
+  it("ignores done blocks in the selection and stamps only movers", () => {
+    const s = stateWith([
+      task({ id: "d", scheduledStartMinutes: 540, status: "done" }),
+      task({ id: "m", scheduledStartMinutes: 600 }),
+    ]);
+    const out = reducer(s, {
+      type: "MOVE_TASK_GROUP",
+      ids: ["d", "m"],
+      deltaMinutes: 60,
+      nowMs: NOW,
+    });
+    expect(startOf(out, "d")).toBe(540); // history untouched
+    expect(startOf(out, "m")).toBe(660);
+    expect(out.tasks.find((t) => t.id === "d")?.updatedAtMs).toBe(NOW - 1000);
+    expect(out.tasks.find((t) => t.id === "m")?.updatedAtMs).toBe(NOW);
+  });
+});

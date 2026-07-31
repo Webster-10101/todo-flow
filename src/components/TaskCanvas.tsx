@@ -159,7 +159,8 @@ function TaskBlock(props: {
   onResizePreview?: (id: string, minutes: number | null) => void;
   canvasStartMin: number;
   selected?: boolean;
-  onSelect?: () => void;
+  // shiftKey lets the canvas route shift-clicks to multi-select.
+  onSelect?: (shiftKey: boolean) => void;
   renameRequested?: boolean;
   onRenameHandled?: () => void;
 }) {
@@ -318,7 +319,7 @@ function TaskBlock(props: {
       <div
         {...attributes}
         {...listeners}
-        onClick={() => props.onSelect?.()}
+        onClick={(e) => props.onSelect?.(e.shiftKey)}
         className={[
           "relative h-full w-full overflow-hidden rounded-lg border shadow-soft flex flex-col",
           isBreak ? "border-emerald-200/80 bg-emerald-50/90" : "border-line/80",
@@ -597,6 +598,11 @@ export function TaskCanvas(props: {
   minutesReadOnlyById?: Record<string, boolean>;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
+  // Shift-click group: dragging any member moves the whole set by one delta,
+  // preserving relative gaps (MOVE_TASK_GROUP in the reducer).
+  multiSelectedIds?: string[];
+  onToggleMultiSelect?: (id: string) => void;
+  onMoveTaskGroup?: (ids: string[], deltaMinutes: number) => void;
   // Set by the touch action bar's Rename button — opens that block's title
   // for editing, since touch has no double-click.
   renamingId?: string | null;
@@ -715,14 +721,60 @@ export function TaskCanvas(props: {
     [props.tasks],
   );
 
+  // Shift-click multi-selection, as a set for the drag path.
+  const multiSet = useMemo(
+    () => new Set(props.multiSelectedIds ?? []),
+    [props.multiSelectedIds],
+  );
+  // The blocks a drag of `activeId` moves as one unit — null means a plain
+  // single-block drag. Members mirror the reducer's MOVE_TASK_GROUP filter.
+  const groupFor = (activeId: string) => {
+    if (!multiSet.has(activeId)) return null;
+    const members = topLevel.filter(
+      (t) =>
+        multiSet.has(t.id) &&
+        t.inSprint &&
+        t.scheduledStartMinutes != null &&
+        t.status !== "done" &&
+        t.status !== "active",
+    );
+    return members.length > 1 && members.some((m) => m.id === activeId)
+      ? members
+      : null;
+  };
+  const durationOf = (id: string) =>
+    scheduleById.get(id)?.minutes ?? SCHEDULE_SLOT_MIN;
+  // Slot-snapped delta for a group drag, clamped so the WHOLE group stays
+  // inside the day — same maths the reducer re-runs on commit.
+  const groupDragDelta = (anchor: Task, members: Task[], dyMin: number) => {
+    const anchorStart = anchor.scheduledStartMinutes as number;
+    const desired = snapToCanvas(anchorStart + dyMin);
+    let minStart = Number.POSITIVE_INFINITY;
+    let maxEnd = Number.NEGATIVE_INFINITY;
+    for (const m of members) {
+      const s = m.scheduledStartMinutes as number;
+      minStart = Math.min(minStart, s);
+      maxEnd = Math.max(maxEnd, s + durationOf(m.id));
+    }
+    return Math.max(
+      DAY_START_MIN - minStart,
+      Math.min(desired - anchorStart, DAY_END_MIN - maxEnd),
+    );
+  };
+
   // Mirror of the reducer's cascadeTasks input-building, fed from the canvas's
   // own view of the day (schedule rows for durations). Same pure cascade, so
   // preview and commit agree by determinism.
-  const computePreviewMoves = (placedId: string, start: number, end: number) => {
+  const computePreviewMoves = (
+    placed: Array<{ id: string; start: number; end: number }>,
+  ) => {
+    const placedIds = new Set(placed.map((p) => p.id));
     const movable: CascadeBlock[] = [];
-    const obstacles: Array<{ start: number; end: number }> = [{ start, end }];
+    const obstacles: Array<{ start: number; end: number }> = placed.map(
+      (p) => ({ start: p.start, end: p.end }),
+    );
     for (const t of topLevel) {
-      if (t.id === placedId || t.scheduledStartMinutes == null) continue;
+      if (placedIds.has(t.id) || t.scheduledStartMinutes == null) continue;
       if (!t.inSprint || t.status === "done") continue;
       const minutes = scheduleById.get(t.id)?.minutes ?? SCHEDULE_SLOT_MIN;
       if (t.status === "active") {
@@ -754,11 +806,13 @@ export function TaskCanvas(props: {
     const task = topLevel.find((t) => t.id === id);
     if (!task || task.scheduledStartMinutes == null) return;
     setPreviewMoves(
-      computePreviewMoves(
-        id,
-        task.scheduledStartMinutes,
-        task.scheduledStartMinutes + minutes,
-      ),
+      computePreviewMoves([
+        {
+          id,
+          start: task.scheduledStartMinutes,
+          end: task.scheduledStartMinutes + minutes,
+        },
+      ]),
     );
   };
 
@@ -801,14 +855,34 @@ export function TaskCanvas(props: {
         setHoverStart(null);
         setIsDragging(true);
         lastDragPreviewRef.current = null;
-        props.onSelect?.(String(e.active.id));
+        // Dragging a group member keeps the multi-selection; anything else
+        // collapses to a plain single selection.
+        const id = String(e.active.id);
+        if (!multiSet.has(id)) props.onSelect?.(id);
       }}
       onDragMove={(e) => {
         const task = topLevel.find((t) => t.id === String(e.active.id));
         if (!task || task.scheduledStartMinutes == null) return;
         const dyMin = e.delta.y / props.pxPerMinute;
-        const duration =
-          scheduleById.get(task.id)?.minutes ?? SCHEDULE_SLOT_MIN;
+        const group = groupFor(task.id);
+        if (group) {
+          const delta = groupDragDelta(task, group, dyMin);
+          if (delta === lastDragPreviewRef.current) return;
+          lastDragPreviewRef.current = delta;
+          const placed = group.map((m) => {
+            const start = (m.scheduledStartMinutes as number) + delta;
+            return { id: m.id, start, end: start + durationOf(m.id) };
+          });
+          const moves = computePreviewMoves(placed);
+          // Non-anchor members render at their proposed spots via override;
+          // the anchor already tracks the pointer through its dnd transform.
+          for (const p of placed) {
+            if (p.id !== task.id) moves.set(p.id, p.start);
+          }
+          setPreviewMoves(moves);
+          return;
+        }
+        const duration = durationOf(task.id);
         // Same maths as onDragEnd — recompute only when the snapped slot
         // changes, not per pointer event.
         const desired = Math.min(
@@ -818,7 +892,9 @@ export function TaskCanvas(props: {
         if (desired === lastDragPreviewRef.current) return;
         lastDragPreviewRef.current = desired;
         setPreviewMoves(
-          computePreviewMoves(task.id, desired, desired + duration),
+          computePreviewMoves([
+            { id: task.id, start: desired, end: desired + duration },
+          ]),
         );
       }}
       onDragCancel={() => {
@@ -833,8 +909,18 @@ export function TaskCanvas(props: {
         const task = topLevel.find((t) => t.id === String(e.active.id));
         if (!task || task.scheduledStartMinutes == null) return;
         const dyMin = e.delta.y / props.pxPerMinute;
-        const duration =
-          scheduleById.get(task.id)?.minutes ?? SCHEDULE_SLOT_MIN;
+        const group = groupFor(task.id);
+        if (group && props.onMoveTaskGroup) {
+          const delta = groupDragDelta(task, group, dyMin);
+          if (delta !== 0) {
+            props.onMoveTaskGroup(
+              group.map((m) => m.id),
+              delta,
+            );
+          }
+          return;
+        }
+        const duration = durationOf(task.id);
         const desired = Math.min(
           snapToCanvas(task.scheduledStartMinutes + dyMin),
           Math.max(DAY_START_MIN, DAY_END_MIN - duration),
@@ -1006,8 +1092,12 @@ export function TaskCanvas(props: {
                 startMinOverride={previewMoves?.get(t.id)}
                 onResizePreview={handleResizePreview}
                 canvasStartMin={displayStartMin}
-                selected={props.selectedId === t.id}
-                onSelect={() => props.onSelect?.(t.id)}
+                selected={props.selectedId === t.id || multiSet.has(t.id)}
+                onSelect={(shiftKey) =>
+                  shiftKey && props.onToggleMultiSelect
+                    ? props.onToggleMultiSelect(t.id)
+                    : props.onSelect?.(t.id)
+                }
                 renameRequested={props.renamingId === t.id}
                 onRenameHandled={props.onRenameHandled}
               />

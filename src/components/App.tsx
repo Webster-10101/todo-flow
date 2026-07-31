@@ -381,6 +381,7 @@ export function App() {
             onStartSprint={handleStartSprint}
             onReorderSubtasks={actions.reorderSubtasks}
             onSetTaskTime={actions.setTaskTime}
+            onMoveTaskGroup={actions.moveTaskGroup}
             onEditTitle={actions.editTitle}
             onEditMinutes={actions.editMinutes}
             onEditNotes={actions.editNotes}

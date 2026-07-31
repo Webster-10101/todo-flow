@@ -212,6 +212,8 @@ export function useTodoFlow() {
         dispatch({ type: "REORDER_SUBTASKS", parentId, orderedChildIds, nowMs: Date.now() }),
       setTaskTime: (id: string, minutes: number | null) =>
         dispatch({ type: "SET_TASK_TIME", id, minutes, nowMs: Date.now() }),
+      moveTaskGroup: (ids: string[], deltaMinutes: number) =>
+        dispatch({ type: "MOVE_TASK_GROUP", ids, deltaMinutes, nowMs: Date.now() }),
       insertBreakInPlan: (minutes: 5 | 10) =>
         dispatch({
           type: "INSERT_BREAK_PLAN",

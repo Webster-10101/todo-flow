@@ -2,7 +2,7 @@ import type { RunnerState, Settings, Task } from "./types";
 import { DEFAULT_BREAK_MINUTES, DEFAULT_TASK_MINUTES, POSITION_GAP } from "./types";
 import { clampMinutes } from "./ids";
 import { todayLocalISO } from "./dates";
-import { cascade, DAY_END_MIN, type CascadeBlock } from "./cascade";
+import { cascade, DAY_END_MIN, DAY_START_MIN, type CascadeBlock } from "./cascade";
 
 export type State = {
   tasks: Task[];
@@ -50,6 +50,7 @@ export type Action =
   | { type: "REORDER_SPRINT"; orderedIds: string[]; nowMs: number }
   | { type: "REORDER_SUBTASKS"; parentId: string; orderedChildIds: string[]; nowMs: number }
   | { type: "SET_TASK_TIME"; id: string; minutes: number | null; nowMs: number }
+  | { type: "MOVE_TASK_GROUP"; ids: string[]; deltaMinutes: number; nowMs: number }
   | { type: "INSERT_BREAK_PLAN"; payload: InsertBreakPayload }
   | { type: "INSERT_BREAK_NEXT"; payload: InsertBreakPayload }
   | { type: "START_SPRINT"; nowMs: number }
@@ -169,18 +170,20 @@ export function findNextFreeSlot(args: {
 
 // Bounce-down: after a block lands (dropped, resized, created, extended),
 // push every queued sprint block it now collides with LATER, gap-absorbing —
-// see cascade.ts. `placed` is the interval that just claimed its spot (one
-// row, or task + auto-break together); its ids are excluded from the sweep.
+// see cascade.ts. `placed` holds the intervals that just claimed their spots
+// (one row, task + auto-break together, or a shift-selected group); its ids
+// are excluded from the sweep.
 // Displaced rows come back touch()-stamped; everything else keeps its object
 // identity so the sync engine's per-id reference diff pushes only real moves.
 function cascadeTasks(args: {
   tasks: Task[];
-  placed: { ids: string[]; start: number; end: number };
+  placed: { ids: string[]; intervals: Array<{ start: number; end: number }> };
   activeTaskId: string | null;
   nowMs: number;
 }): Task[] {
   const { tasks, placed, activeTaskId, nowMs } = args;
-  if (placed.end <= placed.start) return tasks;
+  const placedIntervals = placed.intervals.filter((i) => i.end > i.start);
+  if (placedIntervals.length === 0) return tasks;
   const placedIds = new Set(placed.ids);
 
   const movable: CascadeBlock[] = [];
@@ -206,7 +209,7 @@ function cascadeTasks(args: {
     });
   }
 
-  const obstacles = [{ start: placed.start, end: placed.end }];
+  const obstacles = [...placedIntervals];
   if (activeInterval) obstacles.push(activeInterval);
   const { moves } = cascade({ movable, obstacles });
   if (moves.size === 0) return tasks;
@@ -499,8 +502,7 @@ export function reducer(state: State, action: Action): State {
             tasks: [...added, ...state.tasks],
             placed: {
               ids: added.map((a) => a.id),
-              start: scheduledStartMinutes,
-              end: placedEnd,
+              intervals: [{ start: scheduledStartMinutes, end: placedEnd }],
             },
             activeTaskId: state.runner.activeTaskId,
             nowMs,
@@ -550,8 +552,12 @@ export function reducer(state: State, action: Action): State {
           tasks: next,
           placed: {
             ids: [parent.id],
-            start: parent.scheduledStartMinutes,
-            end: parent.scheduledStartMinutes + getTaskDurationMinutes(parent, next),
+            intervals: [
+              {
+                start: parent.scheduledStartMinutes,
+                end: parent.scheduledStartMinutes + getTaskDurationMinutes(parent, next),
+              },
+            ],
           },
           activeTaskId: state.runner.activeTaskId,
           nowMs,
@@ -597,8 +603,12 @@ export function reducer(state: State, action: Action): State {
           tasks: next,
           placed: {
             ids: [block.id],
-            start: block.scheduledStartMinutes,
-            end: block.scheduledStartMinutes + getTaskDurationMinutes(block, next),
+            intervals: [
+              {
+                start: block.scheduledStartMinutes,
+                end: block.scheduledStartMinutes + getTaskDurationMinutes(block, next),
+              },
+            ],
           },
           activeTaskId: state.runner.activeTaskId,
           nowMs: action.nowMs,
@@ -673,8 +683,9 @@ export function reducer(state: State, action: Action): State {
             tasks: next,
             placed: {
               ids: [action.id],
-              start: slot,
-              end: slot + getTaskDurationMinutes(target, state.tasks),
+              intervals: [
+                { start: slot, end: slot + getTaskDurationMinutes(target, state.tasks) },
+              ],
             },
             activeTaskId: state.runner.activeTaskId,
             nowMs: action.nowMs,
@@ -754,8 +765,12 @@ export function reducer(state: State, action: Action): State {
               tasks: next,
               placed: {
                 ids: [newParent.id],
-                start: duplicateStart,
-                end: duplicateStart + getTaskDurationMinutes(newParent, next),
+                intervals: [
+                  {
+                    start: duplicateStart,
+                    end: duplicateStart + getTaskDurationMinutes(newParent, next),
+                  },
+                ],
               },
               activeTaskId: state.runner.activeTaskId,
               nowMs,
@@ -830,7 +845,73 @@ export function reducer(state: State, action: Action): State {
         tasks: normalizeTasks(
           cascadeTasks({
             tasks: next,
-            placed: { ids: [action.id], start: snapped, end: snapped + duration },
+            placed: {
+              ids: [action.id],
+              intervals: [{ start: snapped, end: snapped + duration }],
+            },
+            activeTaskId: state.runner.activeTaskId,
+            nowMs: action.nowMs,
+          }),
+        ),
+      };
+    }
+
+    case "MOVE_TASK_GROUP": {
+      // Shift-selected group drag: every block moves by the same delta, so
+      // relative gaps survive by construction. The delta is clamped for the
+      // group as a unit — the whole selection hits the day edge together
+      // instead of concertinaing. No per-block snapping: the canvas hands us
+      // a slot-snapped delta, and off-grid members (auto-breaks) stay glued.
+      const group = state.tasks.filter(
+        (t) =>
+          action.ids.includes(t.id) &&
+          t.parentId === null &&
+          t.inSprint &&
+          t.scheduledStartMinutes != null &&
+          t.status !== "done" &&
+          t.status !== "active" &&
+          t.id !== state.runner.activeTaskId,
+      );
+      if (group.length === 0) return state;
+      let minStart = Number.POSITIVE_INFINITY;
+      let maxEnd = Number.NEGATIVE_INFINITY;
+      for (const t of group) {
+        const start = t.scheduledStartMinutes as number;
+        minStart = Math.min(minStart, start);
+        maxEnd = Math.max(maxEnd, start + getTaskDurationMinutes(t, state.tasks));
+      }
+      const delta = Math.max(
+        DAY_START_MIN - minStart,
+        Math.min(action.deltaMinutes, DAY_END_MIN - maxEnd),
+      );
+      if (delta === 0) return state;
+      const groupIds = new Set(group.map((t) => t.id));
+      const next = state.tasks.map((t) =>
+        groupIds.has(t.id)
+          ? touch(
+              {
+                ...t,
+                scheduledStartMinutes: (t.scheduledStartMinutes as number) + delta,
+              },
+              action.nowMs,
+            )
+          : t,
+      );
+      return {
+        ...state,
+        tasks: normalizeTasks(
+          cascadeTasks({
+            tasks: next,
+            placed: {
+              ids: group.map((t) => t.id),
+              intervals: group.map((t) => {
+                const start = (t.scheduledStartMinutes as number) + delta;
+                return {
+                  start,
+                  end: start + getTaskDurationMinutes(t, state.tasks),
+                };
+              }),
+            },
             activeTaskId: state.runner.activeTaskId,
             nowMs: action.nowMs,
           }),
@@ -1045,7 +1126,10 @@ export function reducer(state: State, action: Action): State {
       // block, which renders at the parent's scheduled time.
       const active = next.find((t) => t.id === id);
       const r = state.runner;
-      let placed: { ids: string[]; start: number; end: number } | null = null;
+      let placed: {
+        ids: string[];
+        intervals: Array<{ start: number; end: number }>;
+      } | null = null;
       if (active && active.parentId === null && r.activeStartedAt != null) {
         const startDate = new Date(r.activeStartedAt);
         const startMin = startDate.getHours() * 60 + startDate.getMinutes();
@@ -1056,15 +1140,19 @@ export function reducer(state: State, action: Action): State {
           DAY_END_MIN,
           Math.ceil(startMin + getTaskDurationMinutes(active, next) + pausedSoFar / 60_000),
         );
-        placed = { ids: [id], start: startMin, end: endMin };
+        placed = { ids: [id], intervals: [{ start: startMin, end: endMin }] };
       } else if (active?.parentId != null) {
         const parent = next.find((t) => t.id === active.parentId);
         if (parent && parent.inSprint && parent.scheduledStartMinutes != null) {
           placed = {
             ids: [parent.id],
-            start: parent.scheduledStartMinutes,
-            end:
-              parent.scheduledStartMinutes + getTaskDurationMinutes(parent, next),
+            intervals: [
+              {
+                start: parent.scheduledStartMinutes,
+                end:
+                  parent.scheduledStartMinutes + getTaskDurationMinutes(parent, next),
+              },
+            ],
           };
         }
       }

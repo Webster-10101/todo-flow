@@ -2,6 +2,29 @@
 
 Generated from `changelog.json` — edit that, not this file.
 
+## 1.5.0 — 2026-08-03
+
+_The day stays on screen while you work_
+
+### Added
+
+- A focus bar along the bottom carries the countdown and the controls you actually reach for — done, pause, five minutes more or less, a break.
+- Freelance Radio is one press away from the focus bar, for when you want something in your ears.
+- Zoom still gives you the big full-screen countdown when you want the blinkers on. Escape brings the plan back, and the timer keeps running either way.
+
+### Changed
+
+- Pressing play no longer swaps your plan for a full-screen timer. The day stays put: the running block lights up with a live countdown and fills in as the time goes, and everything else fades back — still there, still draggable, so you can reshuffle the afternoon without stopping the clock.
+- Starting a task moves its block to the time you actually started it, so the plan reflects the clock instead of quietly drifting from it.
+
+## 1.4.0 — 2026-07-31
+
+_Move several blocks at once_
+
+### Added
+
+- Shift-click blocks to select more than one, then drag any of them — the whole group moves together, keeping the gaps between them exactly as you laid them out. Everything else bounces out of the way as usual.
+
 ## 1.3.0 — 2026-07-29
 
 _Blocks push each other out of the way_

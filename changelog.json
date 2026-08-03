@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.5.0",
+    "date": "2026-08-03",
+    "headline": "The day stays on screen while you work",
+    "items": [
+      {
+        "kind": "changed",
+        "text": "Pressing play no longer swaps your plan for a full-screen timer. The day stays put: the running block lights up with a live countdown and fills in as the time goes, and everything else fades back — still there, still draggable, so you can reshuffle the afternoon without stopping the clock."
+      },
+      {
+        "kind": "added",
+        "text": "A focus bar along the bottom carries the countdown and the controls you actually reach for — done, pause, five minutes more or less, a break."
+      },
+      {
+        "kind": "added",
+        "text": "Freelance Radio is one press away from the focus bar, for when you want something in your ears."
+      },
+      {
+        "kind": "added",
+        "text": "Zoom still gives you the big full-screen countdown when you want the blinkers on. Escape brings the plan back, and the timer keeps running either way."
+      },
+      {
+        "kind": "changed",
+        "text": "Starting a task moves its block to the time you actually started it, so the plan reflects the clock instead of quietly drifting from it."
+      }
+    ]
+  },
+  {
     "version": "1.4.0",
     "date": "2026-07-31",
     "headline": "Move several blocks at once",

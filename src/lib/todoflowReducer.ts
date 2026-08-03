@@ -135,6 +135,41 @@ function getTaskDurationMinutes(t: Task, allTasks: Task[]): number {
   return Math.max(0, Math.round(t.estimateMinutes + t.extraMinutes));
 }
 
+// Move the block that's about to start to where the clock actually is, then
+// bounce whatever it lands on later. Without this the canvas shows the running
+// block sitting in its planned slot while the now-line marches past it — and
+// the cascade's "pinned obstacle" (which reads scheduledStartMinutes) would
+// guard the wrong stretch of the day. Starting a task IS a plan edit.
+//
+// startId is the leaf that runs; the canvas block is its top-level ancestor,
+// so that's what gets placed.
+function placeStartedBlockAtNow(args: {
+  tasks: Task[];
+  startId: string;
+  nowMs: number;
+}): Task[] {
+  const { tasks, startId, nowMs } = args;
+  const leaf = tasks.find((t) => t.id === startId);
+  if (!leaf) return tasks;
+  const topId = leaf.parentId ?? leaf.id;
+  const top = tasks.find((t) => t.id === topId);
+  if (!top || !top.inSprint) return tasks;
+
+  const d = new Date(nowMs);
+  const startMin = d.getHours() * 60 + d.getMinutes();
+  const duration = getTaskDurationMinutes(top, tasks);
+
+  const placed = tasks.map((t) =>
+    t.id === topId ? touch({ ...t, scheduledStartMinutes: startMin }, nowMs) : t,
+  );
+  return cascadeTasks({
+    tasks: placed,
+    placed: { ids: [topId], intervals: [{ start: startMin, end: startMin + duration }] },
+    activeTaskId: startId,
+    nowMs,
+  });
+}
+
 // Earliest free 30-min slot ≥ baseMin that doesn't collide with existing sprint
 // tasks. Simple linear scan; sprint sizes are small enough.
 export function findNextFreeSlot(args: {
@@ -1000,7 +1035,9 @@ export function reducer(state: State, action: Action): State {
       });
       return {
         ...state,
-        tasks: normalizeTasks(next),
+        tasks: normalizeTasks(
+          placeStartedBlockAtNow({ tasks: next, startId: firstId, nowMs: action.nowMs }),
+        ),
         runner: {
           ...initialState.runner,
           mode: "run",
@@ -1033,7 +1070,9 @@ export function reducer(state: State, action: Action): State {
 
       return {
         ...state,
-        tasks: normalizeTasks(next),
+        tasks: normalizeTasks(
+          placeStartedBlockAtNow({ tasks: next, startId, nowMs: action.nowMs }),
+        ),
         runner: {
           ...initialState.runner,
           mode: "run",
@@ -1058,7 +1097,9 @@ export function reducer(state: State, action: Action): State {
       });
       return {
         ...state,
-        tasks: normalizeTasks(next),
+        tasks: normalizeTasks(
+          placeStartedBlockAtNow({ tasks: next, startId: nextId, nowMs: action.nowMs }),
+        ),
         runner: {
           ...state.runner,
           mode: "run",

@@ -17,6 +17,9 @@ import { useSupabaseAuth } from "@/src/lib/useSupabaseAuth";
 import { AuthSheet } from "./AuthSheet";
 import { PlanView } from "./PlanView";
 import { RunView } from "./RunView";
+import { FocusBar } from "./FocusBar";
+import { useActiveTimer } from "@/src/lib/useActiveTimer";
+import { useRunShortcuts } from "@/src/lib/useRunShortcuts";
 import { Toast } from "./Toast";
 import { CompletionView } from "./CompletionView";
 import { ExportModal } from "./ExportModal";
@@ -52,7 +55,54 @@ export function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [hasUnseenRelease, setHasUnseenRelease] = useState(false);
+  // Full-screen focus view. Pressing play no longer forces this — the canvas
+  // stays up and the day fades back instead. This is the opt-in blinkers.
+  const [zoomed, setZoomed] = useState(false);
   const { user } = useSupabaseAuth();
+
+  // The timer engine lives here, above both views, so the countdown, ding and
+  // notifications survive switching between the canvas and the zoomed view.
+  const timer = useActiveTimer({ tasks, runner });
+  const isRunning = runner.mode === "run";
+
+  // Leaving run mode (stopped, or the sprint finished) drops the blinkers.
+  useEffect(() => {
+    if (!isRunning) setZoomed(false);
+  }, [isRunning]);
+
+  useRunShortcuts({
+    enabled: isRunning,
+    hasActive: timer.isTicking,
+    onTogglePause: actions.togglePause,
+    onEscape: () => setZoomed(false),
+    onDone: actions.completeActive,
+    onExtend: actions.extendActive,
+    onReduce: actions.reduceActive,
+    onInsertBreak: actions.insertBreakNext,
+  });
+
+  // Shared by the desktop bar and the mobile dock copy. Only the desktop one
+  // takes doneRef — focus() on a display:none button does nothing.
+  const focusBarProps = {
+    runner,
+    activeTask: timer.activeTask,
+    activeParent: timer.activeParent,
+    nextTask: timer.nextTask,
+    remainingMs: timer.remainingMs,
+    isTicking: timer.isTicking,
+    isTimeUp: timer.isTimeUp,
+    timeUpPulseOn: timer.timeUpPulseOn,
+    activeEndAt: timer.activeEndAt,
+    autoStartRemainingMs: timer.autoStartRemainingMs,
+    onDoneActive: actions.completeActive,
+    onTogglePause: actions.togglePause,
+    onExtendActive: actions.extendActive,
+    onReduceActive: actions.reduceActive,
+    onInsertBreakNext: actions.insertBreakNext,
+    onStartNext: actions.startNext,
+    onZoom: () => setZoomed(true),
+    onStop: actions.exitToPlan,
+  };
 
   // Dot on the version chip when this build is newer than the last changelog
   // the user opened. A device with no record is a fresh install, not someone
@@ -346,26 +396,25 @@ export function App() {
           )}
         </div>
 
-        {runner.mode === "run" ? (
-          sprintIsComplete ? (
-            <CompletionView tasks={tasks} onBackToPlan={actions.exitToPlan} />
-          ) : (
-            <RunView
-              now={now}
-              tasks={tasks}
-              runner={runner}
-              settings={settings}
-              onStartNext={actions.startNext}
-              onDoneActive={actions.completeActive}
-              onDeleteActive={actions.deleteActive}
-              onExtendActive={actions.extendActive}
-              onReduceActive={actions.reduceActive}
-              onInsertBreakNext={actions.insertBreakNext}
-              onStopAfterThisTask={actions.stopAfterThisTask}
-              onTogglePause={actions.togglePause}
-              onExitToPlan={actions.exitToPlan}
-            />
-          )
+        {isRunning && sprintIsComplete ? (
+          <CompletionView tasks={tasks} onBackToPlan={actions.exitToPlan} />
+        ) : isRunning && zoomed ? (
+          <RunView
+            now={now}
+            tasks={tasks}
+            runner={runner}
+            settings={settings}
+            timer={timer}
+            onStartNext={actions.startNext}
+            onDoneActive={actions.completeActive}
+            onDeleteActive={actions.deleteActive}
+            onExtendActive={actions.extendActive}
+            onReduceActive={actions.reduceActive}
+            onInsertBreakNext={actions.insertBreakNext}
+            onStopAfterThisTask={actions.stopAfterThisTask}
+            onTogglePause={actions.togglePause}
+            onBackToCanvas={() => setZoomed(false)}
+          />
         ) : (
           <PlanView
             now={now}
@@ -392,9 +441,30 @@ export function App() {
             onStartFreshDay={handleStartFreshDay}
             onOpenExport={() => setExportOpen(true)}
             onStartTask={actions.startTask}
+            activeTaskId={isRunning ? runner.activeTaskId : null}
+            activeElapsedFraction={timer.elapsedFraction}
+            activeRemainingMs={timer.remainingMs}
+            activeIsTimeUp={timer.isTimeUp}
+            focusBar={
+              isRunning ? (
+                <FocusBar {...focusBarProps} compact />
+              ) : null
+            }
           />
         )}
       </div>
+
+      {/* Desktop focus bar — the mobile copy is slotted into MobileDock by
+          PlanView, so only one of the two is ever on screen. */}
+      {isRunning && !zoomed && !sprintIsComplete ? (
+        <div className="hidden md:block fixed inset-x-0 bottom-0 z-40 pointer-events-none">
+          <div className="mx-auto w-full max-w-[980px] px-8 pb-4">
+            <div className="pointer-events-auto">
+              <FocusBar {...focusBarProps} doneRef={timer.doneButtonRef} />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <ExportModal open={exportOpen} tasks={tasks} onClose={() => setExportOpen(false)} />
       <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />

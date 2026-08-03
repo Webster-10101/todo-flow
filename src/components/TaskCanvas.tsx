@@ -2,7 +2,7 @@
 
 import type { Task } from "@/src/lib/types";
 import type { SprintSchedule } from "@/src/lib/time";
-import { formatClock, formatMinutesOfDay } from "@/src/lib/time";
+import { formatClock, formatCountdown, formatMinutesOfDay } from "@/src/lib/time";
 import { googleCalendarUrl } from "@/src/lib/calendar";
 import {
   DndContext,
@@ -163,6 +163,13 @@ function TaskBlock(props: {
   onSelect?: (shiftKey: boolean) => void;
   renameRequested?: boolean;
   onRenameHandled?: () => void;
+  // Running state. `dimmed` fades everything that isn't the active block so
+  // the day recedes without disappearing — it stays draggable.
+  isActive?: boolean;
+  dimmed?: boolean;
+  elapsedFraction?: number;
+  remainingMs?: number;
+  isTimeUp?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: props.task.id,
@@ -306,14 +313,14 @@ function TaskBlock(props: {
         top: topPx,
         height: heightPx,
         transform: transform ? `translate3d(0, ${transform.y}px, 0)` : undefined,
-        zIndex: isDragging ? 30 : props.selected ? 20 : 1,
-        opacity: isDragging ? 0.92 : 1,
+        zIndex: isDragging ? 30 : props.selected ? 20 : props.isActive ? 15 : 1,
+        opacity: isDragging ? 0.92 : props.dimmed ? 0.42 : 1,
         // Settle into place on drop / reflow. Off while dragging or resizing
         // so the block tracks the finger without lag.
         transition:
           isDragging || resizeRef.current.captured
             ? undefined
-            : "top 140ms cubic-bezier(0.2, 0.9, 0.3, 1.15), height 140ms cubic-bezier(0.2, 0.9, 0.3, 1.15)",
+            : "top 140ms cubic-bezier(0.2, 0.9, 0.3, 1.15), height 140ms cubic-bezier(0.2, 0.9, 0.3, 1.15), opacity 260ms ease-out",
       }}
     >
       <div
@@ -325,6 +332,11 @@ function TaskBlock(props: {
           isBreak ? "border-emerald-200/80 bg-emerald-50/90" : "border-line/80",
           muted ? "opacity-55 saturate-50 animate-block-settle" : "",
           props.selected ? "ring-2 ring-ink/30" : "",
+          props.isActive && !props.selected
+            ? props.isTimeUp
+              ? "ring-2 ring-rose-400/70"
+              : "ring-2 ring-teal-500/60"
+            : "",
           "pl-3 pr-2 py-1.5",
         ].join(" ")}
         style={{
@@ -344,8 +356,19 @@ function TaskBlock(props: {
             style={{ background: palette.accent }}
           />
         ) : null}
+        {/* Elapsed drain — the part of the block that's already been spent
+            tints over, so a glance at the canvas reads how far in you are.
+            Sits under the content (z-0 content is above by DOM order). */}
+        {props.isActive ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 bg-ink/[0.07] transition-[height] duration-500 ease-linear"
+            style={{ height: `${Math.round((props.elapsedFraction ?? 0) * 100)}%` }}
+          />
+        ) : null}
         {showTitleRow ? (
-        <div className="flex items-center gap-1.5 min-w-0">
+        // `relative` keeps the row painting above the elapsed-drain overlay.
+        <div className="relative flex items-center gap-1.5 min-w-0">
           <button
             type="button"
             onClick={() => {
@@ -503,7 +526,7 @@ function TaskBlock(props: {
         </div>
         ) : null}
         {showMetaRow ? (
-          <div className="mt-1 ml-[18px] flex items-center gap-1.5 text-[11px] text-muted">
+          <div className="relative mt-1 ml-[18px] flex items-center gap-1.5 text-[11px] text-muted">
             <input
               type="number"
               min={1}
@@ -535,9 +558,23 @@ function TaskBlock(props: {
               aria-label="Minutes"
             />
             <span className="text-muted/80">min</span>
-            <span className="ml-auto tabular-nums text-muted/80">
-              ends {formatClock(new Date(props.endsAtMs))}
-            </span>
+            {props.isActive ? (
+              <span
+                className={[
+                  "ml-auto rounded px-1.5 py-px font-mono tabular-nums font-medium",
+                  props.isTimeUp
+                    ? "bg-rose-100 text-rose-700"
+                    : "bg-teal-600/10 text-teal-800",
+                ].join(" ")}
+                aria-label="Time remaining"
+              >
+                {formatCountdown(props.remainingMs ?? 0)}
+              </span>
+            ) : (
+              <span className="ml-auto tabular-nums text-muted/80">
+                ends {formatClock(new Date(props.endsAtMs))}
+              </span>
+            )}
           </div>
         ) : null}
         {showResizeHandle ? (
@@ -607,6 +644,12 @@ export function TaskCanvas(props: {
   // for editing, since touch has no double-click.
   renamingId?: string | null;
   onRenameHandled?: () => void;
+  // Running state, from useActiveTimer. When activeTaskId is set the rest of
+  // the day fades back — visible and still draggable, just not shouting.
+  activeTaskId?: string | null;
+  activeElapsedFraction?: number;
+  activeRemainingMs?: number;
+  activeIsTimeUp?: boolean;
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -1066,6 +1109,16 @@ export function TaskCanvas(props: {
           {topLevel.map((t) => {
             const row = scheduleById.get(t.id);
             if (!row) return null;
+            // The running block is the top-level ancestor of the active leaf —
+            // starting a parent runs its first subtask, but the canvas only
+            // ever draws top-level blocks.
+            const isActive = Boolean(
+              props.activeTaskId &&
+                (t.id === props.activeTaskId ||
+                  props.tasks.some(
+                    (c) => c.id === props.activeTaskId && c.parentId === t.id,
+                  )),
+            );
             // Growing into the next block pushes it (bounce-down cascade) —
             // midnight is the only resize cap.
             const myStart = t.scheduledStartMinutes ?? displayStartMin;
@@ -1100,6 +1153,11 @@ export function TaskCanvas(props: {
                 }
                 renameRequested={props.renamingId === t.id}
                 onRenameHandled={props.onRenameHandled}
+                isActive={isActive}
+                dimmed={Boolean(props.activeTaskId) && !isActive}
+                elapsedFraction={props.activeElapsedFraction}
+                remainingMs={props.activeRemainingMs}
+                isTimeUp={props.activeIsTimeUp}
               />
             );
           })}

@@ -44,6 +44,13 @@ export function PlanView(props: {
   onStartFreshDay: () => void;
   onOpenExport: () => void;
   onStartTask: (id: string) => void;
+  // Running state. The focus bar is rendered by App and slotted into the
+  // mobile dock here; desktop gets its own fixed copy.
+  activeTaskId?: string | null;
+  activeElapsedFraction?: number;
+  activeRemainingMs?: number;
+  activeIsTimeUp?: boolean;
+  focusBar?: React.ReactNode;
 }) {
   const [newTitle, setNewTitle] = useState("");
   const [newMinutes, setNewMinutes] = useState(props.settings.defaultTaskMinutes);
@@ -79,13 +86,17 @@ export function PlanView(props: {
   // today's. Undone tasks roll forward to today on hydrate, so no date
   // filter is needed for them.
   const todayISO = useMemo(() => todayLocalISO(props.now), [props.now]);
+  // "active" belongs here too — the running block stays on the canvas now
+  // instead of the view swapping out from under it.
   const sprintAll = useMemo(
     () =>
       props.tasks.filter(
         (t) =>
           t.inSprint &&
           t.parentId === null &&
-          (t.status === "queued" || (t.status === "done" && t.date === todayISO)),
+          (t.status === "queued" ||
+            t.status === "active" ||
+            (t.status === "done" && t.date === todayISO)),
       ),
     [props.tasks, todayISO],
   );
@@ -100,16 +111,19 @@ export function PlanView(props: {
     return map;
   }, [props.tasks]);
 
+  // Derived from sprintAll, not queuedSprint: a parent whose subtask is running
+  // has status "active", and it still needs its minutes summed from its kids.
   const minutesOverrideById = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const parent of queuedSprint) {
+    for (const parent of sprintAll) {
+      if (parent.status === "done") continue;
       if (parent.kind !== "task") continue;
       const kids = subtasksByParent.get(parent.id) ?? [];
       if (!kids.length) continue;
       out[parent.id] = kids.reduce((sum, k) => sum + (k.estimateMinutes + k.extraMinutes), 0);
     }
     return out;
-  }, [queuedSprint, subtasksByParent]);
+  }, [sprintAll, subtasksByParent]);
 
   const minutesReadOnlyById = useMemo(() => {
     const out: Record<string, boolean> = {};
@@ -235,7 +249,14 @@ export function PlanView(props: {
   );
 
   return (
-    <div className="space-y-6 pb-48 md:pb-0 md:space-y-0 md:grid md:grid-cols-[320px_1fr] md:gap-6">
+    <div
+      className={[
+        "space-y-6 md:space-y-0 md:grid md:grid-cols-[320px_1fr] md:gap-6",
+        // Clearance for the fixed dock / focus bar so the last block of the
+        // day can still be scrolled clear of them.
+        props.focusBar ? "pb-64 md:pb-28" : "pb-48 md:pb-0",
+      ].join(" ")}
+    >
       {/* Desktop sidebar — on phones its contents move to the fixed MobileDock
           below, so the canvas renders first. */}
       <aside className="hidden md:block space-y-4 md:sticky md:top-4 md:self-start">
@@ -408,6 +429,10 @@ export function PlanView(props: {
           onMoveTaskGroup={props.onMoveTaskGroup}
           renamingId={renamingId}
           onRenameHandled={clearRenaming}
+          activeTaskId={props.activeTaskId}
+          activeElapsedFraction={props.activeElapsedFraction}
+          activeRemainingMs={props.activeRemainingMs}
+          activeIsTimeUp={props.activeIsTimeUp}
         />
       </div>
 
@@ -530,6 +555,7 @@ export function PlanView(props: {
         onAddTask={props.onAddTask}
         onInsertBreak={props.onInsertBreak}
         onStartSprint={props.onStartSprint}
+        focusBar={props.focusBar}
         actionBar={
           selectedTask ? (
             <BlockActionBar

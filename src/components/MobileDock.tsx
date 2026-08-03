@@ -10,6 +10,9 @@ import { useKeyboardInset } from "@/src/lib/useKeyboardInset";
 export function MobileDock(props: {
   queuedCount: number;
   actionBar: React.ReactNode;
+  // Running controls, when something is running. Sits above the action bar so
+  // the countdown is the topmost thing in the dock.
+  focusBar?: React.ReactNode;
   onAddTask: (title: string, minutes: number) => void;
   onInsertBreak: (minutes: 5 | 10) => void;
   defaultMinutes: number;
@@ -45,6 +48,7 @@ export function MobileDock(props: {
         setFocused(false);
       }}
     >
+      {props.focusBar}
       {props.actionBar}
       <div className="border-t border-line bg-white/95 backdrop-blur px-3 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+8px)]">
         <div className="flex items-center gap-2">

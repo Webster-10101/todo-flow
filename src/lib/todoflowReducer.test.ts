@@ -205,3 +205,53 @@ describe("MOVE_TASK_GROUP", () => {
     expect(out.tasks.find((t) => t.id === "m")?.updatedAtMs).toBe(NOW);
   });
 });
+
+// Pressing play used to swap the whole view out, so nobody could see where the
+// running block sat. Now the canvas stays up — the block has to move to where
+// the clock actually is, or it lies about what's happening.
+describe("starting a task places its block at now", () => {
+  // NOW is 10:00 local → minute-of-day 600.
+  it("START_TASK moves the block to now and bounces what it lands on", () => {
+    const s = stateWith([
+      task({ id: "a", scheduledStartMinutes: 610 }), // 10:10, 25 min
+      task({ id: "b", scheduledStartMinutes: 720, estimateMinutes: 30 }), // 12:00
+    ]);
+    const out = reducer(s, { type: "START_TASK", id: "b", nowMs: NOW });
+    expect(startOf(out, "b")).toBe(600); // pinned to the timer
+    expect(startOf(out, "a")).toBe(630); // bounced clear of b's 600–630
+    expect(out.runner.activeTaskId).toBe("b");
+  });
+
+  it("starting a parent places the parent block, not the subtask", () => {
+    const s = stateWith([
+      task({ id: "p", scheduledStartMinutes: 720 }),
+      task({ id: "c1", parentId: "p", estimateMinutes: 20 }),
+      task({ id: "c2", parentId: "p", estimateMinutes: 20 }),
+    ]);
+    const out = reducer(s, { type: "START_TASK", id: "p", nowMs: NOW });
+    expect(out.runner.activeTaskId).toBe("c1"); // the leaf runs
+    expect(startOf(out, "p")).toBe(600); // the canvas block moves
+    expect(startOf(out, "c1")).toBe(null); // subtasks aren't scheduled
+  });
+
+  it("START_NEXT places the next block at now too", () => {
+    const s = stateWith([
+      task({ id: "a", scheduledStartMinutes: 540, status: "done" }),
+      task({ id: "b", scheduledStartMinutes: 900 }), // 15:00
+    ]);
+    const out = reducer(s, { type: "START_NEXT", nowMs: NOW });
+    expect(out.runner.activeTaskId).toBe("b");
+    expect(startOf(out, "b")).toBe(600);
+    expect(startOf(out, "a")).toBe(540); // done blocks are history
+  });
+
+  it("leaves the rest of the day alone when nothing overlaps", () => {
+    const s = stateWith([
+      task({ id: "later", scheduledStartMinutes: 900 }),
+      task({ id: "go", scheduledStartMinutes: 1000, estimateMinutes: 30 }),
+    ]);
+    const out = reducer(s, { type: "START_TASK", id: "go", nowMs: NOW });
+    expect(startOf(out, "go")).toBe(600);
+    expect(startOf(out, "later")).toBe(900);
+  });
+});

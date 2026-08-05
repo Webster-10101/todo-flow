@@ -9,7 +9,11 @@ export type State = {
   runner: RunnerState;
   settings: Settings;
   lastCompletion: { taskId: string; at: number } | null;
-  lastDeletion: { tasks: Task[]; at: number } | null;
+  // The undo buffer behind the 5s toast. `tasks` are pre-change copies of every
+  // row the action touched — removed rows AND rows it merely edited, since
+  // UNDO_DELETE restores by id (see there). `label` overrides the toast's
+  // default "Deleted N tasks" wording for actions that aren't plain deletes.
+  lastDeletion: { tasks: Task[]; at: number; label?: string } | null;
 };
 
 export type AddTaskPayload = {
@@ -65,7 +69,7 @@ export type Action =
   | { type: "EXIT_TO_PLAN"; nowMs: number }
   | { type: "AUTO_START_TICK"; nowMs: number }
   | { type: "SET_LATEST_FINISH"; minutes: number }
-  | { type: "START_FRESH_DAY" }
+  | { type: "START_FRESH_DAY"; nowMs: number }
   | { type: "UNDO_DELETE"; nowMs: number }
   | { type: "CLEAR_LAST_DELETION" }
   | { type: "SET_SCHEDULED_START"; minutes: number | null }
@@ -427,6 +431,41 @@ function rollDay(tasks: Task[], nowMs: number): Task[] {
       ? touch({ ...t, date: today }, nowMs)
       : t,
   );
+}
+
+// What "Start fresh day" will do, decided in one place so the button's enabled
+// state, the confirm copy and the reducer can't drift apart.
+//
+// The canvas — not the whole task list — is what gets cleared:
+//   swept  = today's completions (sprint or Later) + auto-break furniture.
+//            Breaks are never ticked off, so without this they survive every
+//            clear and roll forward forever as orphans.
+//   parked = unfinished canvas tasks, dropped into Later unscheduled. These
+//            are what actually clutters a new morning: rollDay carries every
+//            undone task forward, and the old sweep left all of them in place.
+// Untouched: previous days' completions (that's the history the plan view
+// already hides by date), anything already in Later, and the running block.
+export function planFreshDay(
+  tasks: Task[],
+  opts: { today: string; activeTaskId: string | null },
+): { sweptIds: Set<string>; parkedIds: Set<string> } {
+  const { today } = opts;
+  const sweptIds = new Set<string>();
+  const parkedIds = new Set<string>();
+
+  for (const t of tasks) {
+    if (t.parentId !== null) continue; // children follow their parent
+    if (t.id === opts.activeTaskId) continue; // never yank the block that's running
+    if (t.status === "done") {
+      if (t.date === today) sweptIds.add(t.id);
+      continue;
+    }
+    if (!t.inSprint) continue; // already parked in Later
+    if (t.kind === "break") sweptIds.add(t.id);
+    else parkedIds.add(t.id);
+  }
+
+  return { sweptIds, parkedIds };
 }
 
 function clearedRunner(runner: RunnerState, opts: { awaitingNext: boolean }): RunnerState {
@@ -1306,20 +1345,85 @@ export function reducer(state: State, action: Action): State {
       };
     }
 
-    case "START_FRESH_DAY":
+    case "START_FRESH_DAY": {
+      const { sweptIds, parkedIds } = planFreshDay(state.tasks, {
+        today: todayLocalISO(new Date(action.nowMs)),
+        activeTaskId: state.runner.activeTaskId,
+      });
+      if (sweptIds.size === 0 && parkedIds.size === 0) return state;
+
+      const isSwept = (t: Task) =>
+        sweptIds.has(t.id) || (t.parentId !== null && sweptIds.has(t.parentId));
+
+      // Parked tasks join the end of Later in the order they sat on the canvas,
+      // rather than interleaving with what's already there on stale positions.
+      const laterBase = maxPosition(
+        state.tasks.filter(
+          (t) => t.parentId === null && !t.inSprint && !parkedIds.has(t.id) && !isSwept(t),
+        ),
+      );
+      const parkOrder = new Map(
+        state.tasks
+          .filter((t) => parkedIds.has(t.id))
+          .slice()
+          .sort(
+            (a, b) =>
+              (a.scheduledStartMinutes ?? Number.POSITIVE_INFINITY) -
+                (b.scheduledStartMinutes ?? Number.POSITIVE_INFINITY) ||
+              a.createdAt - b.createdAt,
+          )
+          .map((t, i) => [t.id, laterBase + (i + 1) * POSITION_GAP] as const),
+      );
+
+      // Pre-change copies of everything touched, so one Undo restores the whole
+      // day — the removals and the parked tasks' schedule alike.
+      const touched = state.tasks.filter((t) => isSwept(t) || parkedIds.has(t.id));
+
+      const nextTasks = state.tasks
+        .filter((t) => !isSwept(t))
+        .map((t) =>
+          parkedIds.has(t.id)
+            ? touch(
+                {
+                  ...t,
+                  inSprint: false,
+                  scheduledStartMinutes: null,
+                  position: parkOrder.get(t.id) ?? t.position,
+                },
+                action.nowMs,
+              )
+            : t,
+        );
+
       return {
         ...state,
-        tasks: normalizeTasks(state.tasks.filter((t) => t.status !== "done")),
+        tasks: normalizeTasks(nextTasks),
+        // The Later list sits below the canvas on desktop, so parked tasks land
+        // off-screen — the toast has to say where they went.
+        lastDeletion: {
+          tasks: touched,
+          at: action.nowMs,
+          label: parkedIds.size
+            ? `Day cleared · ${parkedIds.size} task${parkedIds.size === 1 ? "" : "s"} moved to Later`
+            : "Day cleared",
+        },
       };
+    }
 
     case "UNDO_DELETE": {
       if (!state.lastDeletion) return state;
-      // Re-stamp restored rows so the undo out-LWWs the delete's tombstone.
-      const restored = [
-        ...state.tasks,
-        ...state.lastDeletion.tasks.map((t) => touch(t, action.nowMs)),
-      ];
-      return { ...state, tasks: normalizeTasks(restored), lastDeletion: null };
+      // Restore by id, not by append: the buffer can hold rows that were only
+      // edited (Start fresh day parks tasks rather than deleting them), and a
+      // row can also have been re-created by an inbound sync since the delete.
+      // Either way the pre-change copy wins. Re-stamped so the undo out-LWWs
+      // both the delete's tombstone and the edit it's reverting.
+      const byId = new Map(state.tasks.map((t) => [t.id, t] as const));
+      for (const t of state.lastDeletion.tasks) byId.set(t.id, touch(t, action.nowMs));
+      return {
+        ...state,
+        tasks: normalizeTasks([...byId.values()]),
+        lastDeletion: null,
+      };
     }
 
     case "CLEAR_LAST_DELETION":

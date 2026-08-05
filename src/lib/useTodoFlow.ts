@@ -241,7 +241,7 @@ export function useTodoFlow() {
       setScheduledStart: (minutes: number | null) =>
         dispatch({ type: "SET_SCHEDULED_START", minutes }),
       setPomodoro: (patch: PomodoroPatch) => dispatch({ type: "SET_POMODORO", patch }),
-      startFreshDay: () => dispatch({ type: "START_FRESH_DAY" }),
+      startFreshDay: () => dispatch({ type: "START_FRESH_DAY", nowMs: Date.now() }),
       undoDelete: () => dispatch({ type: "UNDO_DELETE", nowMs: Date.now() }),
     }),
     [],

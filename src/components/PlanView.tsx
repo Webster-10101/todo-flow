@@ -12,6 +12,7 @@ import {
 } from "@/src/lib/time";
 import { useGridPxPerMin } from "@/src/lib/layout";
 import { todayLocalISO } from "@/src/lib/dates";
+import { planFreshDay } from "@/src/lib/todoflowReducer";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TaskCanvas } from "./TaskCanvas";
 import { TaskRow } from "./TaskRow";
@@ -236,10 +237,18 @@ export function PlanView(props: {
     [selectedTask, canvasSchedule],
   );
 
-  const doneCount = useMemo(
-    () => props.tasks.filter((t) => t.status === "done").length,
-    [props.tasks],
+  // What "Start fresh day" would actually touch — the button was previously
+  // gated on a count of ALL done tasks ever, so it sat disabled on a morning
+  // where nothing was ticked yesterday even though the canvas was full.
+  const freshDayPlan = useMemo(
+    () =>
+      planFreshDay(props.tasks, {
+        today: todayISO,
+        activeTaskId: props.activeTaskId ?? null,
+      }),
+    [props.tasks, todayISO, props.activeTaskId],
   );
+  const freshDayCount = freshDayPlan.sweptIds.size + freshDayPlan.parkedIds.size;
   const exportableCount = useMemo(
     () =>
       props.tasks.filter(
@@ -277,17 +286,17 @@ export function PlanView(props: {
           <button
             type="button"
             onClick={props.onStartFreshDay}
-            disabled={doneCount === 0}
+            disabled={freshDayCount === 0}
             className={[
               "rounded-lg border border-line px-3 py-1.5 text-xs transition-colors",
-              doneCount === 0
+              freshDayCount === 0
                 ? "bg-white/40 text-muted cursor-not-allowed"
                 : "bg-white/70 text-ink hover:bg-soft",
             ].join(" ")}
             title={
-              doneCount === 0
-                ? "No completed tasks to clear"
-                : `Clear ${doneCount} completed task${doneCount === 1 ? "" : "s"}`
+              freshDayCount === 0
+                ? "The day is already clear"
+                : "Clear today's canvas — unfinished tasks move to Later"
             }
           >
             Start fresh day
@@ -500,10 +509,10 @@ export function PlanView(props: {
         <button
           type="button"
           onClick={props.onStartFreshDay}
-          disabled={doneCount === 0}
+          disabled={freshDayCount === 0}
           className={[
             "h-9 rounded-lg border border-line px-3 text-xs transition-colors",
-            doneCount === 0
+            freshDayCount === 0
               ? "bg-white/40 text-muted cursor-not-allowed"
               : "bg-white/70 text-ink active:bg-soft",
           ].join(" ")}

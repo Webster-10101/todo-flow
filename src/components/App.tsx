@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useTodoFlow } from "@/src/lib/useTodoFlow";
+import { planFreshDay } from "@/src/lib/todoflowReducer";
 import {
   formatClock,
   formatMinutesOfDay,
@@ -157,11 +158,12 @@ export function App() {
   }
 
   function handleStartFreshDay() {
-    const doneCount = tasks.filter((t) => t.status === "done").length;
-    if (doneCount === 0) return;
-    const ok = window.confirm(
-      `Clear ${doneCount} completed task${doneCount === 1 ? "" : "s"}? Unfinished tasks stay put.`,
-    );
+    const { sweptIds, parkedIds } = planFreshDay(tasks, {
+      today: todayLocalISO(now),
+      activeTaskId: runner.activeTaskId,
+    });
+    if (sweptIds.size === 0 && parkedIds.size === 0) return;
+    const ok = window.confirm(buildFreshDayPrompt(sweptIds.size, parkedIds.size));
     if (ok) actions.startFreshDay();
   }
 
@@ -472,7 +474,11 @@ export function App() {
 
       <Toast message={praise ?? "Marked done"} visible={toast.on} stackIndex={0} />
       <Toast
-        message={lastDeletion ? buildDeleteMessage(lastDeletion.tasks) : ""}
+        message={
+          lastDeletion
+            ? lastDeletion.label ?? buildDeleteMessage(lastDeletion.tasks)
+            : ""
+        }
         visible={Boolean(lastDeletion)}
         actionLabel="Undo"
         onAction={actions.undoDelete}
@@ -517,6 +523,16 @@ function StreakDots({ tasks }: { tasks: Task[] }) {
       ))}
     </div>
   );
+}
+
+function buildFreshDayPrompt(sweptCount: number, parkedCount: number) {
+  const parts: string[] = [];
+  if (sweptCount) parts.push(`clear ${sweptCount} block${sweptCount === 1 ? "" : "s"}`);
+  if (parkedCount)
+    parts.push(
+      `move ${parkedCount} unfinished task${parkedCount === 1 ? "" : "s"} to Later`,
+    );
+  return `Start fresh day? This will ${parts.join(" and ")}. Earlier days stay as history, and you can undo.`;
 }
 
 function buildDeleteMessage(deletedTasks: { parentId: string | null }[]) {

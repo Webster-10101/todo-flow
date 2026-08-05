@@ -2,6 +2,21 @@
 
 Generated from `changelog.json` — edit that, not this file.
 
+## 1.5.1 — 2026-08-05
+
+_Start fresh day actually clears the day_
+
+### Changed
+
+- Unfinished tasks aren't deleted — they drop into Later, unscheduled, in the order they sat on the day. You re-plan the morning by pulling back what still matters.
+- One Undo puts the whole day back — the cleared blocks and the parked tasks at their original times.
+
+### Fixed
+
+- Start fresh day only ever removed ticked-off tasks, which left the two things that actually pile up: yesterday's unfinished work, and every break block (they never get ticked, so they'd been rolling forward forever). It now clears the whole canvas.
+- Clearing the day no longer deletes completed tasks from previous days. Those stay as history.
+- The button was disabled whenever nothing was ticked, so on a morning after a day you didn't finish anything, you couldn't clear a full canvas at all.
+
 ## 1.5.0 — 2026-08-03
 
 _The day stays on screen while you work_

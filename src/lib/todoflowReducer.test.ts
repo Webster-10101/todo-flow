@@ -255,3 +255,108 @@ describe("starting a task places its block at now", () => {
     expect(startOf(out, "later")).toBe(900);
   });
 });
+
+describe("START_FRESH_DAY", () => {
+  const ids = (s: State) => s.tasks.map((t) => t.id).sort();
+  const find = (s: State, id: string) => s.tasks.find((t) => t.id === id);
+
+  it("clears today's canvas: done go, unfinished drop to Later, breaks vanish", () => {
+    const s = stateWith([
+      task({ id: "done1", scheduledStartMinutes: 540, status: "done" }),
+      task({ id: "brk", scheduledStartMinutes: 565, kind: "break", estimateMinutes: 5 }),
+      task({ id: "open1", scheduledStartMinutes: 600 }),
+      task({ id: "open2", scheduledStartMinutes: 700 }),
+    ]);
+    const out = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+
+    expect(ids(out)).toEqual(["open1", "open2"]);
+    for (const id of ["open1", "open2"]) {
+      expect(find(out, id)?.inSprint).toBe(false);
+      expect(find(out, id)?.scheduledStartMinutes).toBe(null);
+      expect(find(out, id)?.updatedAtMs).toBe(NOW);
+    }
+  });
+
+  it("leaves earlier days' completions alone — that's the history", () => {
+    const s = stateWith([
+      task({ id: "yesterday", status: "done", date: "2026-07-28", scheduledStartMinutes: 540 }),
+      task({ id: "today", status: "done", date: "2026-07-29", scheduledStartMinutes: 600 }),
+    ]);
+    const out = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+    expect(ids(out)).toEqual(["yesterday"]);
+  });
+
+  it("clears today's out-of-sprint completions too", () => {
+    const s = stateWith([
+      task({ id: "sideDone", status: "done", inSprint: false }),
+      task({ id: "backlog", status: "queued", inSprint: false }),
+    ]);
+    const out = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+    expect(ids(out)).toEqual(["backlog"]);
+    // Untouched rows keep their stamp so sync doesn't see a phantom edit.
+    expect(find(out, "backlog")?.updatedAtMs).toBe(NOW - 1000);
+  });
+
+  it("never yanks the block that's running", () => {
+    const s: State = {
+      ...stateWith([
+        task({ id: "running", status: "active", scheduledStartMinutes: 600 }),
+        task({ id: "next", scheduledStartMinutes: 700 }),
+      ]),
+      runner: { ...initialState.runner, mode: "run", activeTaskId: "running" },
+    };
+    const out = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+    expect(find(out, "running")?.inSprint).toBe(true);
+    expect(find(out, "running")?.scheduledStartMinutes).toBe(600);
+    expect(find(out, "next")?.inSprint).toBe(false);
+  });
+
+  it("takes subtasks down with a swept parent and keeps them under a parked one", () => {
+    const s = stateWith([
+      task({ id: "p1", status: "done", scheduledStartMinutes: 540 }),
+      task({ id: "p1a", status: "done", parentId: "p1" }),
+      task({ id: "p2", scheduledStartMinutes: 600 }),
+      task({ id: "p2a", parentId: "p2" }),
+    ]);
+    const out = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+    expect(ids(out)).toEqual(["p2", "p2a"]);
+    // The child's inSprint is untouched — the Later list has no parent filter,
+    // so flipping it would surface the subtask as a top-level row.
+    expect(find(out, "p2a")?.inSprint).toBe(true);
+  });
+
+  it("parks tasks into Later in canvas order, after what's already there", () => {
+    const s = stateWith([
+      task({ id: "backlog", inSprint: false, position: 5000 }),
+      task({ id: "late", scheduledStartMinutes: 700, position: 10 }),
+      task({ id: "early", scheduledStartMinutes: 600, position: 20 }),
+    ]);
+    const out = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+    const later = out.tasks
+      .filter((t) => !t.inSprint && t.status === "queued")
+      .sort((a, b) => a.position - b.position)
+      .map((t) => t.id);
+    expect(later).toEqual(["backlog", "early", "late"]);
+  });
+
+  it("is a no-op on an already-clear day", () => {
+    const s = stateWith([task({ id: "backlog", inSprint: false })]);
+    const out = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+    expect(out).toBe(s);
+  });
+
+  it("undo restores the whole day — removals and parked tasks alike", () => {
+    const s = stateWith([
+      task({ id: "done1", scheduledStartMinutes: 540, status: "done" }),
+      task({ id: "brk", scheduledStartMinutes: 565, kind: "break", estimateMinutes: 5 }),
+      task({ id: "open1", scheduledStartMinutes: 600 }),
+    ]);
+    const cleared = reducer(s, { type: "START_FRESH_DAY", nowMs: NOW });
+    const out = reducer(cleared, { type: "UNDO_DELETE", nowMs: NOW + 1000 });
+
+    expect(ids(out)).toEqual(["brk", "done1", "open1"]);
+    expect(find(out, "open1")?.inSprint).toBe(true);
+    expect(find(out, "open1")?.scheduledStartMinutes).toBe(600);
+    expect(out.lastDeletion).toBe(null);
+  });
+});

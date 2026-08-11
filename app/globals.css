@@ -52,6 +52,20 @@ body {
   animation: block-settle 200ms ease-out;
 }
 
+/* The three bars on the radio button, animated only while audio is actually
+   through. Scales from the bottom so the bars grow off the baseline.
+   The reduced-motion block below freezes them, which is the right still
+   frame — mid-height, clearly bars. */
+@keyframes radio-bar {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -19,6 +19,7 @@ import { TaskRow } from "./TaskRow";
 import { SubtasksPopover } from "./SubtasksPopover";
 import { BlockActionBar } from "./BlockActionBar";
 import { MobileDock } from "./MobileDock";
+import { RadioButton } from "./RadioButton";
 
 export function PlanView(props: {
   now: Date;
@@ -270,6 +271,9 @@ export function PlanView(props: {
           below, so the canvas renders first. */}
       <aside className="hidden md:block space-y-4 md:sticky md:top-4 md:self-start">
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {/* Radio lives here as well as in the focus bar — you want something
+              on while planning the day, not only once a timer is running. */}
+          <RadioButton compact />
           <button
             type="button"
             onClick={props.onOpenExport}
@@ -493,6 +497,7 @@ export function PlanView(props: {
       {/* Phones: rarely-used day utilities live at the end of the scroll —
           the desktop sidebar copies are hidden below md. */}
       <div className="md:hidden flex items-center justify-end gap-2">
+        <RadioButton compact />
         <button
           type="button"
           onClick={props.onOpenExport}

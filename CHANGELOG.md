@@ -2,6 +2,21 @@
 
 Generated from `changelog.json` — edit that, not this file.
 
+## 1.6.0 — 2026-08-11
+
+_Radio, with actual stations_
+
+### Added
+
+- The radio button now opens a dial instead of a single link. KEXP, BBC 6 Music, Radio Beograd 1 and 2, and Doble Nueve play inside the app — one press to put something on, another to stop.
+- Four more to try: FIP, NTS 1, Groove Salad and Radio Paradise Mellow.
+- Volume lives in the panel and is remembered. Nothing ever starts playing on its own when you open the app.
+
+### Changed
+
+- Radio is reachable while you're planning the day, not only once a timer is running.
+- 6 Music Indie Forever, Freelance Radio and Groove Salad open in the browser — those three have no stream that can be played from another site.
+
 ## 1.5.1 — 2026-08-05
 
 _Start fresh day actually clears the day_

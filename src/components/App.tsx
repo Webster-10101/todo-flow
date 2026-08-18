@@ -17,6 +17,7 @@ import { isSyncConfigured } from "@/src/lib/supabase";
 import { useSupabaseAuth } from "@/src/lib/useSupabaseAuth";
 import { AuthSheet } from "./AuthSheet";
 import { PlanView } from "./PlanView";
+import { GoalsPanel } from "./GoalsPanel";
 import { RunView } from "./RunView";
 import { FocusBar } from "./FocusBar";
 import { useActiveTimer } from "@/src/lib/useActiveTimer";
@@ -60,6 +61,27 @@ export function App() {
   // stays up and the day fades back instead. This is the opt-in blinkers.
   const [zoomed, setZoomed] = useState(false);
   const { user } = useSupabaseAuth();
+  // Goals column (Things working set grouped by season goal). Only meaningful
+  // when signed in — the mirror lives in Supabase. Open state remembered.
+  const [goalsOpen, setGoalsOpen] = useState(false);
+  useEffect(() => {
+    try {
+      setGoalsOpen(window.localStorage.getItem("todoflow.goals.open") === "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleGoals = () => {
+    setGoalsOpen((v) => {
+      try {
+        window.localStorage.setItem("todoflow.goals.open", v ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !v;
+    });
+  };
+  const goalsAvailable = isSyncConfigured() && !!user;
 
   // The timer engine lives here, above both views, so the countdown, ding and
   // notifications survive switching between the canvas and the zoomed view.
@@ -191,7 +213,8 @@ export function App() {
 
   return (
     <main className="min-h-screen px-4 pt-7 sm:px-8 sm:pt-10 pb-[calc(1.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(2.5rem+env(safe-area-inset-bottom))]">
-      <div className="mx-auto w-full max-w-[980px]">
+      <div className="mx-auto flex w-full justify-center gap-6">
+      <div className="w-full min-w-0 max-w-[980px]">
         <header className="relative mb-4 md:mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-3 md:gap-4">
           {isSyncConfigured() ? (
             <button
@@ -209,6 +232,23 @@ export function App() {
                 ].join(" ")}
               />
               {user ? "Synced" : "Sync"}
+            </button>
+          ) : null}
+          {goalsAvailable ? (
+            <button
+              type="button"
+              onClick={toggleGoals}
+              aria-pressed={goalsOpen}
+              aria-label={goalsOpen ? "Hide goals" : "Show goals"}
+              title={goalsOpen ? "Hide goals" : "Show goals"}
+              className={[
+                "absolute right-[92px] top-0 z-10 inline-flex h-9 items-center rounded-full border px-3 text-xs transition-colors",
+                goalsOpen
+                  ? "border-ink/30 bg-ink text-paper"
+                  : "border-line bg-white/70 text-muted hover:text-ink hover:bg-soft",
+              ].join(" ")}
+            >
+              Goals
             </button>
           ) : null}
           <div className="text-center md:text-left">
@@ -456,6 +496,18 @@ export function App() {
         )}
       </div>
 
+      {/* Goals column — a real column on wide screens, a sheet below that. */}
+      {goalsAvailable && goalsOpen ? (
+        <aside className="hidden lg:block w-[360px] shrink-0 sticky top-6 h-[calc(100vh-3rem)]">
+          <GoalsPanel
+            enabled={goalsAvailable}
+            todayTasks={tasks}
+            onAddToToday={(title) => actions.addTask(title)}
+          />
+        </aside>
+      ) : null}
+      </div>
+
       {/* Desktop focus bar — the mobile copy is slotted into MobileDock by
           PlanView, so only one of the two is ever on screen. */}
       {isRunning && !zoomed && !sprintIsComplete ? (
@@ -470,6 +522,20 @@ export function App() {
 
       <ExportModal open={exportOpen} tasks={tasks} onClose={() => setExportOpen(false)} />
       <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
+      {goalsAvailable && goalsOpen ? (
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col bg-paper px-4 pt-6 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <GoalsPanel
+            enabled={goalsAvailable}
+            todayTasks={tasks}
+            onAddToToday={(title) => {
+              actions.addTask(title);
+              toggleGoals();
+            }}
+            onClose={toggleGoals}
+          />
+        </div>
+      ) : null}
+
       <AuthSheet open={authOpen} user={user} onClose={() => setAuthOpen(false)} />
 
       <Toast message={praise ?? "Marked done"} visible={toast.on} stackIndex={0} />

@@ -304,7 +304,7 @@ function GoalSection(props: {
       </header>
 
       {!collapsed && group.tasks.length > 0 ? (
-        <ul className="border-t border-line/70">
+        <ul className="border-t border-line">
           {group.tasks.map((t) => (
             <TaskLine
               key={t.things_id}
@@ -319,7 +319,7 @@ function GoalSection(props: {
         </ul>
       ) : null}
       {!collapsed && group.tasks.length === 0 && !isInbox ? (
-        <p className="border-t border-line/70 px-3 py-2 text-xs text-muted/70">
+        <p className="border-t border-line px-3 py-2 text-xs text-muted/70">
           Nothing here yet — drag a task in.
         </p>
       ) : null}
@@ -349,7 +349,7 @@ function TaskLine(props: {
         e.dataTransfer.setData(DRAG_MIME, task.things_id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      className="group/row flex items-start gap-2 px-3 py-1.5 hover:bg-soft/70 cursor-grab active:cursor-grabbing"
+      className="group/row flex items-start gap-2 px-3 py-1.5 hover:bg-soft cursor-grab active:cursor-grabbing"
     >
       {/* Priority as a quiet mark: filled = now, ring = blocker, hollow-grey = waiting. */}
       <span

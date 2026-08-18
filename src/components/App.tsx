@@ -234,23 +234,6 @@ export function App() {
               {user ? "Synced" : "Sync"}
             </button>
           ) : null}
-          {goalsAvailable ? (
-            <button
-              type="button"
-              onClick={toggleGoals}
-              aria-pressed={goalsOpen}
-              aria-label={goalsOpen ? "Hide goals" : "Show goals"}
-              title={goalsOpen ? "Hide goals" : "Show goals"}
-              className={[
-                "absolute right-[92px] top-0 z-10 inline-flex h-9 items-center rounded-full border px-3 text-xs transition-colors",
-                goalsOpen
-                  ? "border-ink/30 bg-ink text-paper"
-                  : "border-line bg-white/70 text-muted hover:text-ink hover:bg-soft",
-              ].join(" ")}
-            >
-              Goals
-            </button>
-          ) : null}
           <div className="text-center md:text-left">
             <div className="hidden md:flex text-sm text-muted items-center justify-center md:justify-start">
               <a
@@ -498,11 +481,12 @@ export function App() {
 
       {/* Goals column — a real column on wide screens, a sheet below that. */}
       {goalsAvailable && goalsOpen ? (
-        <aside className="hidden lg:block w-[360px] shrink-0 sticky top-6 h-[calc(100vh-3rem)]">
+        <aside className="hidden lg:block w-[400px] shrink-0 sticky top-6 h-[calc(100vh-3rem)]">
           <GoalsPanel
             enabled={goalsAvailable}
             todayTasks={tasks}
             onAddToToday={(title) => actions.addTask(title)}
+            onClose={toggleGoals}
           />
         </aside>
       ) : null}
@@ -534,6 +518,20 @@ export function App() {
             onClose={toggleGoals}
           />
         </div>
+      ) : null}
+
+      {/* Goals drawer handle — lives at the page edge so it never collides with
+          the header's stats card. Hidden while the panel is open (it has its own ×). */}
+      {goalsAvailable && !goalsOpen ? (
+        <button
+          type="button"
+          onClick={toggleGoals}
+          aria-label="Show goals"
+          title="Goals"
+          className="fixed right-0 top-24 z-40 rounded-l-xl border border-r-0 border-line bg-white/80 px-2 py-3 text-xs text-muted shadow-soft backdrop-blur hover:bg-white hover:text-ink [writing-mode:vertical-rl]"
+        >
+          Goals
+        </button>
       ) : null}
 
       <AuthSheet open={authOpen} user={user} onClose={() => setAuthOpen(false)} />

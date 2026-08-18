@@ -2,6 +2,21 @@
 
 Generated from `changelog.json` — edit that, not this file.
 
+## 1.7.0 — 2026-08-18
+
+_Goals — your open tasks, grouped by what they're for_
+
+### Added
+
+- A Goals column (the tab on the right edge, or full-screen on a phone) showing every open task from Things, grouped under your season goals. Anything not yet placed sits in an Inbox at the top.
+- Drag a task onto a goal to place it, or use the small selector on the row. Collapse any goal — its count stays visible, so nothing goes out of sight when it folds.
+- → Today puts a task straight onto the day. If it's already on the plan the row says so instead.
+- Double-click a goal to rename it; × archives an empty one. First open offers to seed the five goals from the One Page Plans.
+
+### Changed
+
+- Nothing here writes back to Things — the task list is a mirror refreshed by /world-sync, so the worst it can be is a little stale.
+
 ## 1.6.0 — 2026-08-11
 
 _Radio, with actual stations_

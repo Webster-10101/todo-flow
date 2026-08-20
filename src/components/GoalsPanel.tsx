@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@/src/lib/types";
 import type { ThingsTaskRow } from "@/src/lib/goals";
 import { INBOX_KEY, type GoalGroup, useGoals } from "@/src/lib/useGoals";
+import { ESTIMATE_CHOICES, useEstimates } from "@/src/lib/estimates";
+import { GOAL_DRAG_MIME, TODO_DRAG_MIME, setDraggedTodo } from "@/src/lib/dragTypes";
 
 // The goals column. Every open Things task in the working set, grouped under a
 // season goal, with the ones nobody has placed yet in an Inbox at the top.
@@ -17,11 +19,16 @@ import { INBOX_KEY, type GoalGroup, useGoals } from "@/src/lib/useGoals";
 type Props = {
   enabled: boolean;
   todayTasks: Task[];
-  onAddToToday: (title: string) => void;
+  onAddToToday: (title: string, minutes: number) => void;
   onClose?: () => void;
+  // Fallback length for a todo nobody has estimated yet.
+  defaultMinutes: number;
 };
 
-const DRAG_MIME = "application/x-todoflow-things-id";
+// Same drag, two payloads: a goal section reads the things_id, the day canvas
+// reads title + minutes. See src/lib/dragTypes.ts.
+const DRAG_MIME = GOAL_DRAG_MIME;
+const TODO_MIME = TODO_DRAG_MIME;
 
 function formatDue(iso: string): string {
   const d = new Date(iso);
@@ -46,8 +53,15 @@ function relative(iso: string | null): string {
   return `${Math.round(h / 24)} d ago`;
 }
 
-export function GoalsPanel({ enabled, todayTasks, onAddToToday, onClose }: Props) {
+export function GoalsPanel({
+  enabled,
+  todayTasks,
+  onAddToToday,
+  onClose,
+  defaultMinutes,
+}: Props) {
   const g = useGoals(enabled);
+  const estimates = useEstimates();
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [newGoal, setNewGoal] = useState("");
 
@@ -123,6 +137,9 @@ export function GoalsPanel({ enabled, todayTasks, onAddToToday, onClose }: Props
                 onMove={(thingsId, goalId) => void g.moveTask(thingsId, goalId)}
                 onTodayTitles={onTodayTitles}
                 onAddToToday={onAddToToday}
+                estimates={estimates.map}
+                defaultMinutes={defaultMinutes}
+                onSetEstimate={estimates.set}
               />
             );
           })}
@@ -179,7 +196,10 @@ function GoalSection(props: {
   goalsForMove: { id: string; title: string }[];
   onMove: (thingsId: string, goalId: string | null) => void;
   onTodayTitles: Set<string>;
-  onAddToToday: (title: string) => void;
+  onAddToToday: (title: string, minutes: number) => void;
+  estimates: Record<string, number>;
+  defaultMinutes: number;
+  onSetEstimate: (thingsId: string, minutes: number) => void;
 }) {
   const { group, collapsed } = props;
   const isInbox = group.goal === null;
@@ -313,7 +333,10 @@ function GoalSection(props: {
               goals={props.goalsForMove}
               currentGoalId={group.goal?.id ?? null}
               onMove={(goalId) => props.onMove(t.things_id, goalId)}
-              onAddToToday={() => props.onAddToToday(t.name)}
+              minutes={props.estimates[t.things_id] ?? props.defaultMinutes}
+              estimated={props.estimates[t.things_id] != null}
+              onSetEstimate={(m) => props.onSetEstimate(t.things_id, m)}
+              onAddToToday={(m) => props.onAddToToday(t.name, m)}
             />
           ))}
         </ul>
@@ -335,7 +358,10 @@ function TaskLine(props: {
   goals: { id: string; title: string }[];
   currentGoalId: string | null;
   onMove: (goalId: string | null) => void;
-  onAddToToday: () => void;
+  minutes: number;
+  estimated: boolean;
+  onSetEstimate: (minutes: number) => void;
+  onAddToToday: (minutes: number) => void;
 }) {
   const { task } = props;
   const isNow = task.priority === "now";
@@ -347,8 +373,14 @@ function TaskLine(props: {
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_MIME, task.things_id);
-        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData(
+          TODO_MIME,
+          JSON.stringify({ title: task.name, minutes: props.minutes }),
+        );
+        e.dataTransfer.effectAllowed = "copyMove";
+        setDraggedTodo({ title: task.name, minutes: props.minutes });
       }}
+      onDragEnd={() => setDraggedTodo(null)}
       className="group/row flex items-start gap-2 px-3 py-1.5 hover:bg-soft cursor-grab active:cursor-grabbing"
     >
       {/* Priority as a quiet mark: filled = now, ring = blocker, hollow-grey = waiting. */}
@@ -377,6 +409,30 @@ function TaskLine(props: {
         )}
       </div>
 
+      {/* How long it takes, decided here rather than by resizing a block
+          later. Unset rows show the default in grey so the row still reads
+          as "not thought about yet". */}
+      <select
+        aria-label="Estimate"
+        value={props.minutes}
+        onChange={(e) => props.onSetEstimate(Number(e.target.value))}
+        className={[
+          "shrink-0 rounded-md border border-line bg-white/80 px-1 py-0.5 text-[11px] tabular-nums outline-none",
+          props.estimated
+            ? "text-ink"
+            : "text-muted/70 lg:opacity-0 lg:group-hover/row:opacity-100 lg:focus-within:opacity-100",
+        ].join(" ")}
+      >
+        {(ESTIMATE_CHOICES as readonly number[]).includes(props.minutes) ? null : (
+          <option value={props.minutes}>{props.minutes}m</option>
+        )}
+        {ESTIMATE_CHOICES.map((m) => (
+          <option key={m} value={m}>
+            {m}m
+          </option>
+        ))}
+      </select>
+
       <div className="flex shrink-0 items-center gap-1 lg:opacity-0 lg:group-hover/row:opacity-100 lg:focus-within:opacity-100">
         <select
           aria-label="Move to goal"
@@ -396,7 +452,7 @@ function TaskLine(props: {
         ) : (
           <button
             type="button"
-            onClick={props.onAddToToday}
+            onClick={() => props.onAddToToday(props.minutes)}
             title="Add to today's plan"
             className="rounded-md border border-line bg-white/80 px-1.5 py-0.5 text-[11px] text-ink hover:bg-soft"
           >

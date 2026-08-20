@@ -214,6 +214,19 @@ export function App() {
   return (
     <main className="min-h-screen px-4 pt-7 sm:px-8 sm:pt-10 pb-[calc(1.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(2.5rem+env(safe-area-inset-bottom))]">
       <div className="mx-auto flex w-full justify-center gap-6">
+      {/* Goals column — a real column on wide screens, a sheet below that.
+          Left of the day on purpose: it's the list being read from. */}
+      {goalsAvailable && goalsOpen ? (
+        <aside className="hidden lg:block w-[400px] shrink-0 sticky top-6 h-[calc(100vh-3rem)]">
+          <GoalsPanel
+            enabled={goalsAvailable}
+            todayTasks={tasks}
+            defaultMinutes={settings.defaultTaskMinutes}
+            onAddToToday={(title, minutes) => actions.addTask(title, minutes)}
+            onClose={toggleGoals}
+          />
+        </aside>
+      ) : null}
       <div className="w-full min-w-0 max-w-[980px]">
         <header className="relative mb-4 md:mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-3 md:gap-4">
           {isSyncConfigured() ? (
@@ -456,6 +469,7 @@ export function App() {
             onReorderSubtasks={actions.reorderSubtasks}
             onSetTaskTime={actions.setTaskTime}
             onMoveTaskGroup={actions.moveTaskGroup}
+            onBatchTasks={actions.batchTasks}
             onEditTitle={actions.editTitle}
             onEditMinutes={actions.editMinutes}
             onEditNotes={actions.editNotes}
@@ -479,17 +493,6 @@ export function App() {
         )}
       </div>
 
-      {/* Goals column — a real column on wide screens, a sheet below that. */}
-      {goalsAvailable && goalsOpen ? (
-        <aside className="hidden lg:block w-[400px] shrink-0 sticky top-6 h-[calc(100vh-3rem)]">
-          <GoalsPanel
-            enabled={goalsAvailable}
-            todayTasks={tasks}
-            onAddToToday={(title) => actions.addTask(title)}
-            onClose={toggleGoals}
-          />
-        </aside>
-      ) : null}
       </div>
 
       {/* Desktop focus bar — the mobile copy is slotted into MobileDock by
@@ -511,8 +514,9 @@ export function App() {
           <GoalsPanel
             enabled={goalsAvailable}
             todayTasks={tasks}
-            onAddToToday={(title) => {
-              actions.addTask(title);
+            defaultMinutes={settings.defaultTaskMinutes}
+            onAddToToday={(title, minutes) => {
+              actions.addTask(title, minutes);
               toggleGoals();
             }}
             onClose={toggleGoals}
@@ -528,7 +532,7 @@ export function App() {
           onClick={toggleGoals}
           aria-label="Show goals"
           title="Goals"
-          className="fixed right-0 top-24 z-40 rounded-l-xl border border-r-0 border-line bg-white/80 px-2 py-3 text-xs text-muted shadow-soft backdrop-blur hover:bg-white hover:text-ink [writing-mode:vertical-rl]"
+          className="fixed left-0 top-24 z-40 rounded-r-xl border border-l-0 border-line bg-white/80 px-2 py-3 text-xs text-muted shadow-soft backdrop-blur hover:bg-white hover:text-ink [writing-mode:vertical-rl]"
         >
           Goals
         </button>

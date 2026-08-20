@@ -360,3 +360,68 @@ describe("START_FRESH_DAY", () => {
     expect(out.lastDeletion).toBe(null);
   });
 });
+
+describe("BATCH_TASKS", () => {
+  it("folds the selected blocks into one parent, keeping day order", () => {
+    const s = stateWith([
+      task({ id: "a", scheduledStartMinutes: 540, estimateMinutes: 5 }),
+      task({ id: "b", scheduledStartMinutes: 600, estimateMinutes: 2 }),
+      task({ id: "c", scheduledStartMinutes: 660, estimateMinutes: 10 }),
+    ]);
+    const out = reducer(s, {
+      type: "BATCH_TASKS",
+      payload: { ids: ["c", "a"], parentId: "batch", title: "Admin batch", nowMs: NOW },
+    });
+    const parent = out.tasks.find((t) => t.id === "batch");
+    expect(parent).toBeTruthy();
+    // Starts where the earliest member did, and the members become its kids in
+    // the order they sat on the day.
+    expect(parent?.scheduledStartMinutes).toBe(540);
+    const kids = out.tasks.filter((t) => t.parentId === "batch");
+    expect(kids.map((t) => t.id)).toEqual(["a", "c"]);
+    for (const k of kids) expect(k.scheduledStartMinutes).toBeNull();
+    // Untouched blocks stay where they were.
+    expect(startOf(out, "b")).toBe(600);
+    // The parent carries no duration of its own — the kids are the duration.
+    expect(parent?.estimateMinutes).toBe(0);
+  });
+
+  it("refuses to batch the running block, or a single selection", () => {
+    const running = stateWith([
+      task({ id: "a", scheduledStartMinutes: 540, status: "active" }),
+      task({ id: "b", scheduledStartMinutes: 600 }),
+    ]);
+    const out = reducer(running, {
+      type: "BATCH_TASKS",
+      payload: { ids: ["a", "b"], parentId: "batch", title: "Admin batch", nowMs: NOW },
+    });
+    // Only "b" was eligible, so nothing happens rather than a batch of one.
+    expect(out).toBe(running);
+
+    const one = stateWith([task({ id: "a", scheduledStartMinutes: 540 })]);
+    expect(
+      reducer(one, {
+        type: "BATCH_TASKS",
+        payload: { ids: ["a"], parentId: "batch", title: "Admin batch", nowMs: NOW },
+      }),
+    ).toBe(one);
+  });
+
+  it("does not nest — a block that already has subtasks is left alone", () => {
+    const s = stateWith([
+      task({ id: "parent", scheduledStartMinutes: 540, estimateMinutes: 0 }),
+      task({ id: "kid", parentId: "parent", estimateMinutes: 15 }),
+      task({ id: "a", scheduledStartMinutes: 600, estimateMinutes: 5 }),
+      task({ id: "b", scheduledStartMinutes: 660, estimateMinutes: 5 }),
+    ]);
+    const out = reducer(s, {
+      type: "BATCH_TASKS",
+      payload: { ids: ["parent", "a", "b"], parentId: "batch", title: "Admin", nowMs: NOW },
+    });
+    expect(out.tasks.find((t) => t.id === "parent")?.parentId).toBeNull();
+    expect(out.tasks.filter((t) => t.parentId === "batch").map((t) => t.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+});

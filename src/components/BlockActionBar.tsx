@@ -2,6 +2,7 @@
 
 import type { Task } from "@/src/lib/types";
 import { formatClock } from "@/src/lib/time";
+import { ESTIMATE_CHOICES } from "@/src/lib/estimates";
 
 // Touch replacement for the tiny inline icons on canvas blocks: tap a block
 // to select it, act on it from here. Rendered inside the mobile dock so it
@@ -144,9 +145,32 @@ export function BlockActionBar(props: {
         >
           {t.title || (isBreak ? "Break" : "Untitled task")}
         </span>
+        {/* A duration picker, not just ±5: the short end of the range is where
+            the editing problem lives — a 2-minute job can't be dialled in by
+            resizing a block that's already at its minimum height. */}
+        {!props.minutesReadOnly ? (
+          <select
+            aria-label="Minutes"
+            value={props.minutes}
+            onChange={(e) => props.onEditMinutes(t.id, Number(e.target.value))}
+            className="shrink-0 rounded-md border border-line bg-white/80 px-1.5 py-1 text-xs tabular-nums text-ink outline-none"
+          >
+            {(ESTIMATE_CHOICES as readonly number[]).includes(props.minutes) ? null : (
+              <option value={props.minutes}>{props.minutes} min</option>
+            )}
+            {ESTIMATE_CHOICES.map((m) => (
+              <option key={m} value={m}>
+                {m} min
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="shrink-0 text-xs tabular-nums text-muted">
+            {props.minutes} min
+          </span>
+        )}
         <span className="shrink-0 text-xs tabular-nums text-muted">
-          {props.minutes} min
-          {props.endsAtMs != null ? ` · ends ${formatClock(new Date(props.endsAtMs))}` : ""}
+          {props.endsAtMs != null ? `ends ${formatClock(new Date(props.endsAtMs))}` : ""}
         </span>
         <button
           type="button"

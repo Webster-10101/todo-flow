@@ -18,6 +18,7 @@ import { TaskCanvas } from "./TaskCanvas";
 import { TaskRow } from "./TaskRow";
 import { SubtasksPopover } from "./SubtasksPopover";
 import { BlockActionBar } from "./BlockActionBar";
+import type { DraggedTodo } from "@/src/lib/dragTypes";
 import { MobileDock } from "./MobileDock";
 import { RadioButton } from "./RadioButton";
 
@@ -28,7 +29,7 @@ export function PlanView(props: {
   projectedFinish: Date;
   schedule: SprintSchedule;
   onAddTask: (title: string, minutes: number) => void;
-  onAddTaskAtTime: (scheduledStartMinutes: number) => void;
+  onAddTaskAtTime: (scheduledStartMinutes: number, minutes?: number, title?: string) => void;
   onAddSubtask: (parentId: string, title: string, minutes: number) => void;
   onDuplicate: (id: string) => void;
   onInsertBreak: (minutes: 5 | 10) => void;
@@ -36,6 +37,7 @@ export function PlanView(props: {
   onReorderSubtasks: (parentId: string, orderedChildIds: string[]) => void;
   onSetTaskTime: (id: string, minutes: number) => void;
   onMoveTaskGroup: (ids: string[], deltaMinutes: number) => void;
+  onBatchTasks: (ids: string[]) => void;
   onEditTitle: (id: string, title: string) => void;
   onEditMinutes: (id: string, minutes: number) => void;
   onEditNotes: (id: string, notes: string) => void;
@@ -112,6 +114,18 @@ export function PlanView(props: {
     }
     return map;
   }, [props.tasks]);
+
+  // Same grouping as a plain object — the canvas draws these inside the parent
+  // block, so a batched block shows what's actually in it.
+  const childrenById = useMemo(() => {
+    const out: Record<string, Task[]> = {};
+    for (const [parentId, kids] of subtasksByParent) {
+      out[parentId] = kids
+        .slice()
+        .sort((a, b) => a.position - b.position);
+    }
+    return out;
+  }, [subtasksByParent]);
 
   // Derived from sprintAll, not queuedSprint: a parent whose subtask is running
   // has status "active", and it still needs its minutes summed from its kids.
@@ -433,6 +447,13 @@ export function PlanView(props: {
           onDuplicate={props.onDuplicate}
           onStart={props.onStartTask}
           childCountById={childCountById}
+          childrenById={childrenById}
+          onDropTodoAtTime={(todo: DraggedTodo, start: number) =>
+            props.onAddTaskAtTime(start, todo.minutes, todo.title)
+          }
+          onDropTodoOnTask={(parentId: string, todo: DraggedTodo) =>
+            props.onAddSubtask(parentId, todo.title, todo.minutes)
+          }
           minutesOverrideById={minutesOverrideById}
           minutesReadOnlyById={minutesReadOnlyById}
           selectedId={selectedId}
@@ -561,6 +582,91 @@ export function PlanView(props: {
           onToggleDone={props.onToggleDone}
           onDelete={props.onDelete}
         />
+      ) : null}
+
+      {/* Desktop editor for the selected block. The inline controls on a block
+          only appear once it's tall enough — a 5-minute admin job renders as a
+          sliver with nowhere to click, so selection gets a full-size bar of the
+          same actions touch has had all along. */}
+      {multiSelectedIds.length > 1 ? (
+        <div
+          className={[
+            "hidden md:block fixed inset-x-0 z-40 pointer-events-none",
+            props.focusBar ? "bottom-24" : "bottom-0",
+          ].join(" ")}
+        >
+          <div className="mx-auto w-full max-w-[720px] px-8 pb-4">
+            <div className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-line bg-white/95 px-4 py-3 shadow-soft backdrop-blur">
+              <span className="text-sm text-ink">
+                {multiSelectedIds.length} blocks selected
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  props.onBatchTasks(multiSelectedIds);
+                  setMultiSelectedIds([]);
+                  setSelectedId(null);
+                }}
+                className="ml-auto rounded-lg border border-line bg-ink px-3 py-1.5 text-sm text-paper hover:bg-black transition-colors"
+                title="Fold these into one block, each as a subtask"
+              >
+                Batch into one block
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMultiSelectedIds([]);
+                  setSelectedId(null);
+                }}
+                className="rounded-lg border border-line bg-white/70 px-3 py-1.5 text-sm text-muted hover:bg-soft hover:text-ink transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : selectedTask ? (
+        <div
+          className={[
+            "hidden md:block fixed inset-x-0 z-40 pointer-events-none",
+            props.focusBar ? "bottom-24" : "bottom-0",
+          ].join(" ")}
+        >
+          <div className="mx-auto w-full max-w-[720px] px-8 pb-4">
+            <div className="pointer-events-auto">
+              <BlockActionBar
+                task={selectedTask}
+                minutes={
+                  selectedRow?.minutes ??
+                  Math.max(
+                    1,
+                    Math.round(selectedTask.estimateMinutes + selectedTask.extraMinutes),
+                  )
+                }
+                endsAtMs={selectedRow?.endMs ?? null}
+                minutesReadOnly={Boolean(minutesReadOnlyById[selectedTask.id])}
+                childCount={childCountById[selectedTask.id] ?? 0}
+                onClose={() => setSelectedId(null)}
+                onToggleDone={props.onToggleDone}
+                onEditMinutes={props.onEditMinutes}
+                onDuplicate={props.onDuplicate}
+                onDelete={props.onDelete}
+                onToLater={(id) => {
+                  props.onToggleInSprint(id);
+                  setSelectedId(null);
+                }}
+                onOpenSubtasks={(id, anchor) =>
+                  setSubtaskPopover({ parentId: id, anchor })
+                }
+                onRename={(id) => setRenamingId(id)}
+                onStart={(id) => {
+                  setSelectedId(null);
+                  props.onStartTask(id);
+                }}
+              />
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <MobileDock

@@ -55,6 +55,10 @@ export type Action =
   | { type: "REORDER_SUBTASKS"; parentId: string; orderedChildIds: string[]; nowMs: number }
   | { type: "SET_TASK_TIME"; id: string; minutes: number | null; nowMs: number }
   | { type: "MOVE_TASK_GROUP"; ids: string[]; deltaMinutes: number; nowMs: number }
+  | {
+      type: "BATCH_TASKS";
+      payload: { ids: string[]; parentId: string; title: string; nowMs: number };
+    }
   | { type: "INSERT_BREAK_PLAN"; payload: InsertBreakPayload }
   | { type: "INSERT_BREAK_NEXT"; payload: InsertBreakPayload }
   | { type: "START_SPRINT"; nowMs: number }
@@ -928,6 +932,86 @@ export function reducer(state: State, action: Action): State {
           }),
         ),
       };
+    }
+
+    case "BATCH_TASKS": {
+      // Fold several small blocks into one. The day is full of two- and
+      // five-minute admin; as separate blocks they're unreadable slivers, and
+      // as one batch they're a single box you can still see inside (the canvas
+      // draws the subtask lines). Duration comes from the parts, so the batch
+      // never claims more of the day than the jobs actually take.
+      const { ids, parentId, title, nowMs } = action.payload;
+      const members = state.tasks.filter(
+        (t) =>
+          ids.includes(t.id) &&
+          t.parentId === null &&
+          t.inSprint &&
+          t.kind === "task" &&
+          t.status !== "active" &&
+          t.id !== state.runner.activeTaskId &&
+          // No nesting: a block that already has subtasks stays as it is.
+          !state.tasks.some((c) => c.parentId === t.id),
+      );
+      if (members.length < 2) return state;
+
+      const memberIds = new Set(members.map((t) => t.id));
+      const startMin = members.reduce<number | null>((acc, t) => {
+        if (t.scheduledStartMinutes == null) return acc;
+        return acc == null ? t.scheduledStartMinutes : Math.min(acc, t.scheduledStartMinutes);
+      }, null);
+      // Keep the order they sat in on the day.
+      const ordered = members.slice().sort((a, b) => {
+        const aS = a.scheduledStartMinutes ?? Number.POSITIVE_INFINITY;
+        const bS = b.scheduledStartMinutes ?? Number.POSITIVE_INFINITY;
+        return aS - bS || a.position - b.position;
+      });
+
+      const parent: Task = {
+        id: parentId,
+        title,
+        notes: "",
+        // Zero like ADD_SUBTASK's first-child case: the kids are the duration.
+        estimateMinutes: 0,
+        extraMinutes: 0,
+        scheduledStartMinutes: startMin,
+        status: "queued",
+        kind: "task",
+        parentId: null,
+        inSprint: true,
+        createdAt: nowMs,
+        date: todayLocalISO(new Date(nowMs)),
+        position: maxPosition(state.tasks.filter((t) => t.parentId === null)) + POSITION_GAP,
+        updatedAtMs: nowMs,
+      };
+
+      const rest = state.tasks.filter((t) => !memberIds.has(t.id));
+      const kids = ordered.map((t, i) =>
+        touch(
+          {
+            ...t,
+            parentId,
+            scheduledStartMinutes: null,
+            inSprint: true,
+            position: (i + 1) * POSITION_GAP,
+          },
+          nowMs,
+        ),
+      );
+      const merged = [...rest, parent, ...kids];
+      const duration = getTaskDurationMinutes(parent, merged);
+      const out =
+        startMin == null
+          ? merged
+          : cascadeTasks({
+              tasks: merged,
+              placed: {
+                ids: [parentId],
+                intervals: [{ start: startMin, end: startMin + duration }],
+              },
+              activeTaskId: state.runner.activeTaskId,
+              nowMs,
+            });
+      return { ...state, tasks: normalizeTasks(out) };
     }
 
     case "MOVE_TASK_GROUP": {

@@ -15,6 +15,11 @@ export const CANVAS_END_MIN = 20 * 60; // 1200
 // Snap granularity for scheduled-start times. Matches Focusmate's 15-min grid.
 export const SCHEDULE_SLOT_MIN = 15;
 
+// Snap granularity for DURATION. Deliberately finer than the start grid: a lot
+// of the working set is 2–10 minute admin, and a 15-min resize floor made those
+// impossible to express — you'd drag a 5-min task and get 15.
+export const RESIZE_STEP_MIN = 5;
+
 // Visual density. 2 px/min on desktop → 30-min slot = 60 px (hour = 120 px),
 // full 12h day = 1440 px. Mobile 1.5 → 30-min = 45 px, canvas = 1080 px.
 // Block heights are strictly proportional to time (hour-long task fills 1 hour

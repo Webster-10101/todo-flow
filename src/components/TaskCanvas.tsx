@@ -19,12 +19,24 @@ import {
   DAY_END_MIN,
   DAY_START_MIN,
   MIN_BLOCK_HEIGHT_PX,
+  RESIZE_STEP_MIN,
   SCHEDULE_SLOT_MIN,
 } from "@/src/lib/layout";
 import { cascade, type CascadeBlock } from "@/src/lib/cascade";
+import {
+  hasDraggedTodo,
+  peekDraggedTodo,
+  readDraggedTodo,
+  setDraggedTodo,
+  type DraggedTodo,
+} from "@/src/lib/dragTypes";
 import { paletteForId } from "@/src/lib/palette";
 import { haptic } from "@/src/lib/platform";
 import { useEffect, useMemo, useRef, useState } from "react";
+
+// Height of one inline subtask line inside a block. Kept in step with the
+// row's own padding + text size below.
+const SUBTASK_ROW_PX = 15;
 
 // Small inline icons sized for the title row. Stroke-based so they pick up
 // `currentColor` and inherit hover states from the button.
@@ -147,6 +159,13 @@ function TaskBlock(props: {
   onStart?: (id: string) => void;
   hasChildren: boolean;
   childCount?: number;
+  // Subtask rows drawn inside the block when it's tall enough. This is what
+  // makes a batched block honest: five 5-min admin jobs in one 25-min box you
+  // can still read and tick.
+  subtasks?: Task[];
+  // A todo dragged from the goals column and dropped ON this block — it joins
+  // as a subtask rather than becoming its own sliver on the day.
+  onDropTodo?: (parentId: string, todo: DraggedTodo) => void;
   minutesReadOnly?: boolean;
   minutesOverride?: number;
   maxMinutes?: number;
@@ -154,8 +173,9 @@ function TaskBlock(props: {
   // resize committed right now. Rendering only — the stored time is untouched
   // until the gesture ends.
   startMinOverride?: number;
-  // Fires with the snapped minutes proposal as a resize drag crosses 15-min
-  // boundaries (null on release) so the canvas can preview the cascade.
+  // Fires with the snapped minutes proposal as a resize drag crosses
+  // resize-step boundaries (null on release) so the canvas can preview the
+  // cascade.
   onResizePreview?: (id: string, minutes: number | null) => void;
   canvasStartMin: number;
   selected?: boolean;
@@ -179,6 +199,9 @@ function TaskBlock(props: {
   // on release. Snap happens on commit, not during drag, for smooth preview.
   const [resizeDelta, setResizeDelta] = useState(0);
   const resizeRef = useRef({ startY: 0, startMin: 0, captured: false });
+  // A goals-column todo hovering over this block, about to become a subtask.
+  const [todoOver, setTodoOver] = useState(false);
+  const acceptsTodos = Boolean(props.onDropTodo) && props.task.kind !== "break";
 
   // Local draft for the minutes input. Without this, every keystroke dispatches
   // to the reducer — typing "30" shrinks the block to 3 min mid-type and the
@@ -244,9 +267,31 @@ function TaskBlock(props: {
   const palette = isBreak ? null : paletteForId(props.task.id);
   // Title-only when block is too short for two rows. ~36px is the comfortable
   // threshold for title + meta with the current font sizes.
-  const showMetaRow = heightPx >= 36;
+  const kids = props.subtasks ?? [];
   const showTitleRow = heightPx >= 22;
   const showResizeHandle = !props.minutesReadOnly && heightPx >= 24;
+  // The meta row (minutes + end time) yields to the subtask lines when both
+  // won't fit. On a batched block the contents are the information — knowing
+  // it ends at 09:25 matters less than seeing which five jobs are in it.
+  const showMetaRow =
+    heightPx >= 36 &&
+    (kids.length === 0 || heightPx >= 36 + kids.length * SUBTASK_ROW_PX);
+  // Too short for the meta row: put the duration in the title row instead, as
+  // an editable chip. Without it a 5-minute block shows neither how long it is
+  // nor any way to change it — you had to guess, or drag the resize handle.
+  const showCompactMinutes = showTitleRow && !showMetaRow;
+  // Subtask lines fill whatever is left under the header rows, minus the strip
+  // the resize handle sits in.
+  const subtaskRoomPx =
+    heightPx - (showMetaRow ? 50 : 28) - (showResizeHandle ? 8 : 2);
+  const kidLines = Math.max(0, Math.floor(subtaskRoomPx / SUBTASK_ROW_PX));
+  // If any are hidden, spend one line saying so rather than silently cutting
+  // the list — the whole point of batching is trusting the box holds it all.
+  // That line stays even when it's the only one that fits: "+5 more" and a way
+  // to open them beats a block that looks empty.
+  const kidRows = kids.slice(0, kids.length <= kidLines ? kidLines : kidLines - 1);
+  const hiddenKidCount = kids.length - kidRows.length;
+  const showKidList = kids.length > 0 && kidLines >= 1;
 
   // Stop pointer events on inputs/buttons so they don't activate drag.
   const swallow = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation();
@@ -255,8 +300,8 @@ function TaskBlock(props: {
   const snapResize = (dy: number) => {
     const proposed = resizeRef.current.startMin + dy / props.pxPerMinute;
     const snapped = Math.max(
-      SCHEDULE_SLOT_MIN,
-      Math.round(proposed / SCHEDULE_SLOT_MIN) * SCHEDULE_SLOT_MIN,
+      RESIZE_STEP_MIN,
+      Math.round(proposed / RESIZE_STEP_MIN) * RESIZE_STEP_MIN,
     );
     return props.maxMinutes != null
       ? Math.min(snapped, props.maxMinutes)
@@ -280,7 +325,7 @@ function TaskBlock(props: {
     if (!resizeRef.current.captured) return;
     setResizeDelta(e.clientY - resizeRef.current.startY);
     // Recompute the cascade preview only when the snapped proposal crosses a
-    // 15-min boundary — not per pixel.
+    // resize-step boundary — not per pixel.
     const snapped = snapResize(e.clientY - resizeRef.current.startY);
     if (snapped !== lastResizePreviewRef.current) {
       lastResizePreviewRef.current = snapped;
@@ -327,10 +372,30 @@ function TaskBlock(props: {
         {...attributes}
         {...listeners}
         onClick={(e) => props.onSelect?.(e.shiftKey)}
+        onDragOver={(e) => {
+          if (!acceptsTodos || !hasDraggedTodo(e.dataTransfer)) return;
+          // stopPropagation keeps the grid from also claiming the drop and
+          // creating a separate block underneath this one.
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "copy";
+          setTodoOver(true);
+        }}
+        onDragLeave={() => setTodoOver(false)}
+        onDrop={(e) => {
+          if (!acceptsTodos) return;
+          const todo = readDraggedTodo(e.dataTransfer);
+          setTodoOver(false);
+          if (!todo) return;
+          e.preventDefault();
+          e.stopPropagation();
+          props.onDropTodo?.(props.task.id, todo);
+        }}
         className={[
           "relative h-full w-full overflow-hidden rounded-lg border shadow-soft flex flex-col",
           isBreak ? "border-emerald-200/80 bg-emerald-50/90" : "border-line/80",
           muted ? "opacity-55 saturate-50 animate-block-settle" : "",
+          todoOver ? "ring-2 ring-teal-600/70" : "",
           props.selected ? "ring-2 ring-ink/30" : "",
           props.isActive && !props.selected
             ? props.isTimeUp
@@ -436,6 +501,43 @@ function TaskBlock(props: {
               {props.task.title || (isBreak ? "Break" : "Task")}
             </div>
           )}
+          {showCompactMinutes ? (
+            <span className="flex shrink-0 items-baseline">
+            <input
+              type="number"
+              min={1}
+              value={minutesDraft}
+              onFocus={(e) => {
+                minutesFocusedRef.current = true;
+                e.currentTarget.select();
+              }}
+              onChange={(e) => {
+                if (props.minutesReadOnly) return;
+                setMinutesDraft(e.target.value);
+              }}
+              onBlur={() => {
+                minutesFocusedRef.current = false;
+                commitMinutesDraft();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  setMinutesDraft(String(displayMinutes));
+                  e.currentTarget.blur();
+                }
+              }}
+              onPointerDown={swallow}
+              onClick={swallow}
+              disabled={props.minutesReadOnly}
+              className="w-[22px] appearance-none bg-transparent text-right text-[10px] tabular-nums text-muted outline-none border-b border-transparent hover:border-line focus:border-ink/50 transition-colors [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              aria-label="Minutes"
+              title="Minutes"
+            />
+            <span className="text-[10px] text-muted/70">m</span>
+            </span>
+          ) : null}
           {props.onStart && props.task.status === "queued" ? (
             <button
               type="button"
@@ -577,6 +679,65 @@ function TaskBlock(props: {
             )}
           </div>
         ) : null}
+        {showKidList ? (
+          <div className="relative mt-0.5 ml-[18px] mr-1 flex min-h-0 flex-col overflow-hidden">
+            {kidRows.map((k) => {
+              const kDone = k.status === "done";
+              return (
+                <div
+                  key={k.id}
+                  className="flex items-center gap-1.5 leading-[15px] text-[10px]"
+                >
+                  <button
+                    type="button"
+                    onPointerDown={swallow}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      props.onToggleDone(k.id);
+                    }}
+                    aria-label={kDone ? `Mark ${k.title} not done` : `Mark ${k.title} done`}
+                    className={[
+                      "relative h-[10px] w-[10px] shrink-0 rounded-full border transition-colors",
+                      kDone
+                        ? "border-ink/50 bg-ink/70"
+                        : "border-line/90 bg-white/70 hover:border-ink/40",
+                    ].join(" ")}
+                  />
+                  <span
+                    className={[
+                      "min-w-0 flex-1 truncate select-none",
+                      kDone ? "text-muted/70 line-through" : "text-ink/75",
+                    ].join(" ")}
+                  >
+                    {k.title || "Subtask"}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-[10px] text-muted/70">
+                    {Math.max(1, Math.round(k.estimateMinutes + k.extraMinutes))}m
+                  </span>
+                </div>
+              );
+            })}
+            {hiddenKidCount > 0 ? (
+              // The canvas keeps height proportional to time, so a short block
+              // physically can't list everything in it. The overflow line opens
+              // the full list rather than pretending it fits.
+              <button
+                type="button"
+                onPointerDown={swallow}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onOpenSubtasks?.(
+                    props.task.id,
+                    e.currentTarget.getBoundingClientRect(),
+                  );
+                }}
+                className="block w-fit text-left leading-[15px] text-[10px] text-muted/70 underline underline-offset-2 hover:text-ink"
+              >
+                +{hiddenKidCount} more
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {showResizeHandle ? (
           <div
             onPointerDown={onResizeStart}
@@ -631,6 +792,12 @@ export function TaskCanvas(props: {
   onStart?: (id: string) => void;
   onOpenSubtasks?: (parentId: string, anchor: DOMRect) => void;
   childCountById?: Record<string, number>;
+  // Subtasks by parent id — drawn inside their parent's block when it has room.
+  childrenById?: Record<string, Task[]>;
+  // A goals-column todo dropped on bare canvas becomes a block at that time;
+  // dropped on an existing block it becomes one of that block's subtasks.
+  onDropTodoAtTime?: (todo: DraggedTodo, scheduledStartMinutes: number) => void;
+  onDropTodoOnTask?: (parentId: string, todo: DraggedTodo) => void;
   minutesOverrideById?: Record<string, number>;
   minutesReadOnlyById?: Record<string, boolean>;
   selectedId?: string | null;
@@ -661,6 +828,11 @@ export function TaskCanvas(props: {
   // Mouse-hover preview: snapped start minute of the block a click would
   // create. Fine-pointer only; cleared while dragging or over a block.
   const [hoverStart, setHoverStart] = useState<number | null>(null);
+  // Where a todo dragged in from the goals column would land. Separate from
+  // hoverStart because it survives the pointer crossing existing blocks and
+  // previews the todo's own length rather than the click-to-create default.
+  const [dropStart, setDropStart] = useState<number | null>(null);
+  const draggedTodo = dropStart != null ? peekDraggedTodo() : null;
   const [isDragging, setIsDragging] = useState(false);
   // Live bounce-down preview during a drag or resize: id -> the start each
   // displaced block would settle at if the gesture committed now. Rendering
@@ -1035,7 +1207,59 @@ export function TaskCanvas(props: {
             setHoverStart(slotContaining(hoveredMin));
           }}
           onMouseLeave={() => setHoverStart(null)}
+          onDragOver={(e) => {
+            if (!props.onDropTodoAtTime || !hasDraggedTodo(e.dataTransfer)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            const rect = e.currentTarget.getBoundingClientRect();
+            const min = displayStartMin + (e.clientY - rect.top) / props.pxPerMinute;
+            setDropStart(slotContaining(min));
+          }}
+          onDragLeave={(e) => {
+            // Fires when crossing onto a child block too — only clear when the
+            // pointer has actually left the grid.
+            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+            setDropStart(null);
+          }}
+          onDrop={(e) => {
+            const todo = props.onDropTodoAtTime
+              ? readDraggedTodo(e.dataTransfer)
+              : null;
+            // Read the position off the drop itself rather than trusting the
+            // ghost's state — a drop can land in the same tick as the dragover
+            // that set it, before React has flushed.
+            const rect = e.currentTarget.getBoundingClientRect();
+            const at = slotContaining(
+              displayStartMin + (e.clientY - rect.top) / props.pxPerMinute,
+            );
+            setDropStart(null);
+            setDraggedTodo(null);
+            if (!todo) return;
+            e.preventDefault();
+            props.onDropTodoAtTime?.(todo, at);
+          }}
         >
+          {/* Drop ghost — a todo dragged from the goals column, previewed at
+              its own estimated length so you can see whether it fits. */}
+          {dropStart != null ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-1 z-20 rounded-lg border-2 border-dashed border-teal-600/60 bg-teal-500/[0.07]"
+              style={{
+                top: (dropStart - displayStartMin) * props.pxPerMinute,
+                height:
+                  Math.min(
+                    draggedTodo?.minutes ?? props.createMinutes,
+                    DAY_END_MIN - dropStart,
+                  ) * props.pxPerMinute,
+              }}
+            >
+              <div className="absolute left-2 top-1 truncate pr-2 text-[11px] text-teal-800/80">
+                {formatMinutesOfDay(dropStart)}
+                {draggedTodo ? ` · ${draggedTodo.minutes} min · ${draggedTodo.title}` : ""}
+              </div>
+            </div>
+          ) : null}
           {/* Hover ghost — faint preview of the block a click would create.
               pointer-events-none is load-bearing: the canvas click handler
               only fires when the click lands on the canvas itself. */}
@@ -1139,6 +1363,8 @@ export function TaskCanvas(props: {
                 onStart={props.onStart}
                 hasChildren={Boolean(props.minutesReadOnlyById?.[t.id])}
                 childCount={props.childCountById?.[t.id]}
+                subtasks={props.childrenById?.[t.id]}
+                onDropTodo={props.onDropTodoOnTask}
                 minutesReadOnly={props.minutesReadOnlyById?.[t.id]}
                 minutesOverride={props.minutesOverrideById?.[t.id]}
                 maxMinutes={maxMinutes}

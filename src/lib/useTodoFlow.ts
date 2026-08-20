@@ -162,13 +162,17 @@ export function useTodoFlow() {
           },
         });
       },
-      addTaskAtTime: (scheduledStartMinutes: number, minutes?: number) => {
+      addTaskAtTime: (
+        scheduledStartMinutes: number,
+        minutes?: number,
+        title?: string,
+      ) => {
         const s = latestStateRef.current.settings;
         dispatch({
           type: "ADD_TASK",
           payload: {
             id: uid(),
-            title: "",
+            title: title ?? "",
             minutes: minutes ?? s.defaultTaskMinutes,
             nowMs: Date.now(),
             scheduledStartMinutes,
@@ -212,6 +216,11 @@ export function useTodoFlow() {
         dispatch({ type: "REORDER_SUBTASKS", parentId, orderedChildIds, nowMs: Date.now() }),
       setTaskTime: (id: string, minutes: number | null) =>
         dispatch({ type: "SET_TASK_TIME", id, minutes, nowMs: Date.now() }),
+      batchTasks: (ids: string[], title = "Admin batch") =>
+        dispatch({
+          type: "BATCH_TASKS",
+          payload: { ids, parentId: uid(), title, nowMs: Date.now() },
+        }),
       moveTaskGroup: (ids: string[], deltaMinutes: number) =>
         dispatch({ type: "MOVE_TASK_GROUP", ids, deltaMinutes, nowMs: Date.now() }),
       insertBreakInPlan: (minutes: 5 | 10) =>

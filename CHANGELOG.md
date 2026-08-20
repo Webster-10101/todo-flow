@@ -2,6 +2,24 @@
 
 Generated from `changelog.json` — edit that, not this file.
 
+## 1.8.0 — 2026-08-19
+
+_Todos on the left, with a length before they hit the day_
+
+### Added
+
+- Every todo row has an estimate. Set it once (2 min up to 90) and → Today puts a block of that length on the day, so there's nothing to resize afterwards.
+- Drag a todo straight onto the day. The ghost previews it at its own length, so you can see whether it fits before you let go.
+- Drop a todo onto an existing block and it joins that block as a subtask — the way to batch small admin into one slot.
+- Shift-click two or more blocks and Batch into one block folds them together, keeping day order. The batch is exactly as long as its parts.
+- Blocks now list what's inside them. As many subtask lines as fit, each tickable, with a link to the rest.
+- Selecting a block on desktop opens the same action bar touch has had — rename, duration, subtasks, delete — so a five-minute block is editable even though it's a sliver.
+
+### Changed
+
+- The Goals column now opens on the left — its tab moved to the left edge with it.
+- Resizing a block now snaps in 5-minute steps rather than 15, and short blocks show their length in the title row.
+
 ## 1.7.0 — 2026-08-18
 
 _Goals — your open tasks, grouped by what they're for_

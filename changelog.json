@@ -1,5 +1,44 @@
 [
   {
+    "version": "1.8.0",
+    "date": "2026-08-19",
+    "headline": "Todos on the left, with a length before they hit the day",
+    "items": [
+      {
+        "kind": "changed",
+        "text": "The Goals column now opens on the left — its tab moved to the left edge with it."
+      },
+      {
+        "kind": "added",
+        "text": "Every todo row has an estimate. Set it once (2 min up to 90) and → Today puts a block of that length on the day, so there's nothing to resize afterwards."
+      },
+      {
+        "kind": "added",
+        "text": "Drag a todo straight onto the day. The ghost previews it at its own length, so you can see whether it fits before you let go."
+      },
+      {
+        "kind": "added",
+        "text": "Drop a todo onto an existing block and it joins that block as a subtask — the way to batch small admin into one slot."
+      },
+      {
+        "kind": "added",
+        "text": "Shift-click two or more blocks and Batch into one block folds them together, keeping day order. The batch is exactly as long as its parts."
+      },
+      {
+        "kind": "added",
+        "text": "Blocks now list what's inside them. As many subtask lines as fit, each tickable, with a link to the rest."
+      },
+      {
+        "kind": "added",
+        "text": "Selecting a block on desktop opens the same action bar touch has had — rename, duration, subtasks, delete — so a five-minute block is editable even though it's a sliver."
+      },
+      {
+        "kind": "changed",
+        "text": "Resizing a block now snaps in 5-minute steps rather than 15, and short blocks show their length in the title row."
+      }
+    ]
+  },
+  {
     "version": "1.7.0",
     "date": "2026-08-18",
     "headline": "Goals — your open tasks, grouped by what they're for",
